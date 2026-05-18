@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/foxytunnel-app",
+    "crates/foxytunnel-core",
+    "crates/foxytunnel-tunnel",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.93"
+license = "MIT OR Apache-2.0"
+authors = ["berkeserce"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
