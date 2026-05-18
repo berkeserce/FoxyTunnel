@@ -95,13 +95,34 @@ pub type SocksServerResult<T> = Result<T, SocksServerError>;
 pub struct SocksServer {
     endpoint: SocksEndpoint,
     client: TorClient<PreferredRuntime>,
+    config: SocksServerConfig,
+}
+
+/// Runtime configuration for the local SOCKS5 server.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SocksServerConfig {
+    /// Whether accepted CONNECT targets should be printed to stderr.
+    pub log_connections: bool,
 }
 
 impl SocksServer {
     /// Creates a local SOCKS5 server.
     #[must_use]
     pub const fn new(endpoint: SocksEndpoint, client: TorClient<PreferredRuntime>) -> Self {
-        Self { endpoint, client }
+        Self {
+            endpoint,
+            client,
+            config: SocksServerConfig {
+                log_connections: false,
+            },
+        }
+    }
+
+    /// Sets runtime server configuration.
+    #[must_use]
+    pub const fn with_config(mut self, config: SocksServerConfig) -> Self {
+        self.config = config;
+        self
     }
 
     /// Runs the SOCKS5 server until the task is cancelled or the listener fails.
@@ -116,9 +137,10 @@ impl SocksServer {
         loop {
             let (stream, _) = listener.accept().await?;
             let client = self.client.clone();
+            let config = self.config;
 
             tokio::spawn(async move {
-                if let Err(error) = handle_connection(stream, client).await {
+                if let Err(error) = handle_connection(stream, client, config).await {
                     eprintln!("SOCKS connection failed: {error}");
                 }
             });
@@ -129,9 +151,13 @@ impl SocksServer {
 async fn handle_connection(
     mut inbound: TcpStream,
     client: TorClient<PreferredRuntime>,
+    config: SocksServerConfig,
 ) -> SocksServerResult<()> {
     negotiate_no_auth(&mut inbound).await?;
     let target = read_connect_target(&mut inbound).await?;
+    if config.log_connections {
+        eprintln!("SOCKS CONNECT {target}");
+    }
 
     let mut outbound = match connect_tor(&client, &target).await {
         Ok(stream) => stream,
@@ -292,8 +318,13 @@ async fn write_reply(stream: &mut TcpStream, reply: u8) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::SocksTarget;
+    use super::{SocksServerConfig, SocksTarget};
     use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn socks_server_config_disables_connection_logs_by_default() {
+        assert!(!SocksServerConfig::default().log_connections);
+    }
 
     #[test]
     fn domain_target_formats_for_logs() {

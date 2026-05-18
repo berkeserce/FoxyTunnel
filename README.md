@@ -40,10 +40,12 @@ Run the temporary CLI entry point:
 cargo run -p foxytunnel-app
 cargo run -p foxytunnel-app -- --bootstrap
 cargo run -p foxytunnel-app -- --socks
+cargo run -p foxytunnel-app -- --socks --port 19051 --log
 ```
 
-The `--socks` command starts a local SOCKS5 proxy on `127.0.0.1:19050`
-after Tor bootstrap succeeds.
+The `--socks` command starts a local SOCKS5 proxy after Tor bootstrap succeeds.
+The default endpoint is `127.0.0.1:19050`. Use `--port` to change the port and
+`--log` to print accepted SOCKS CONNECT targets.
 
 ## License
 

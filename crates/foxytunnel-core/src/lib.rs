@@ -10,7 +10,7 @@ use std::{
 };
 use tor_rtcompat::PreferredRuntime;
 
-pub use socks::{SocksServer, SocksTarget};
+pub use socks::{SocksServer, SocksServerConfig, SocksTarget};
 
 /// Runtime protection modes exposed by the application.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -246,9 +246,9 @@ impl TorService {
     ///
     /// Returns [`TorServiceError::ClientUnavailable`] if the service has no
     /// client, or [`TorServiceError::SocksProxy`] if binding or proxying fails.
-    pub async fn run_socks_proxy(&self) -> TorServiceResult<()> {
+    pub async fn run_socks_proxy(&self, config: SocksServerConfig) -> TorServiceResult<()> {
         let client = self.client().ok_or(TorServiceError::ClientUnavailable)?;
-        let server = SocksServer::new(self.socks_endpoint().clone(), client);
+        let server = SocksServer::new(self.socks_endpoint().clone(), client).with_config(config);
 
         server
             .run()
