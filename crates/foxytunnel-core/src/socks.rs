@@ -10,6 +10,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::mpsc::UnboundedSender,
 };
 use tor_rtcompat::PreferredRuntime;
 
@@ -91,6 +92,17 @@ impl From<io::Error> for SocksServerError {
 /// Result type for SOCKS server operations.
 pub type SocksServerResult<T> = Result<T, SocksServerError>;
 
+/// Runtime events emitted by the SOCKS server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SocksServerEvent {
+    /// Listener is bound and ready for local clients.
+    Listening(String),
+    /// A SOCKS CONNECT target was accepted.
+    Connect(String),
+    /// A per-connection SOCKS error happened.
+    ConnectionFailed(String),
+}
+
 /// Local SOCKS5 server backed by an Arti client.
 pub struct SocksServer {
     endpoint: SocksEndpoint,
@@ -99,28 +111,28 @@ pub struct SocksServer {
 }
 
 /// Runtime configuration for the local SOCKS5 server.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct SocksServerConfig {
     /// Whether accepted CONNECT targets should be printed to stderr.
     pub log_connections: bool,
+    /// Optional event sink for GUI or service-layer logs.
+    pub event_sender: Option<UnboundedSender<SocksServerEvent>>,
 }
 
 impl SocksServer {
     /// Creates a local SOCKS5 server.
     #[must_use]
-    pub const fn new(endpoint: SocksEndpoint, client: TorClient<PreferredRuntime>) -> Self {
+    pub fn new(endpoint: SocksEndpoint, client: TorClient<PreferredRuntime>) -> Self {
         Self {
             endpoint,
             client,
-            config: SocksServerConfig {
-                log_connections: false,
-            },
+            config: SocksServerConfig::default(),
         }
     }
 
     /// Sets runtime server configuration.
     #[must_use]
-    pub const fn with_config(mut self, config: SocksServerConfig) -> Self {
+    pub fn with_config(mut self, config: SocksServerConfig) -> Self {
         self.config = config;
         self
     }
@@ -132,18 +144,29 @@ impl SocksServer {
     /// Returns [`SocksServerError::Io`] if binding or accepting local sockets
     /// fails.
     pub async fn run(self) -> SocksServerResult<()> {
-        let listener = TcpListener::bind(self.endpoint.authority()).await?;
+        let authority = self.endpoint.authority();
+        let listener = TcpListener::bind(&authority).await?;
+        self.config
+            .emit(SocksServerEvent::Listening(authority.clone()));
 
         loop {
             let (stream, _) = listener.accept().await?;
             let client = self.client.clone();
-            let config = self.config;
+            let config = self.config.clone();
 
             tokio::spawn(async move {
                 if let Err(error) = handle_connection(stream, client, config).await {
                     eprintln!("SOCKS connection failed: {error}");
                 }
             });
+        }
+    }
+}
+
+impl SocksServerConfig {
+    fn emit(&self, event: SocksServerEvent) {
+        if let Some(sender) = &self.event_sender {
+            let _ = sender.send(event);
         }
     }
 }
@@ -157,12 +180,16 @@ async fn handle_connection(
     let target = read_connect_target(&mut inbound).await?;
     if config.log_connections {
         eprintln!("SOCKS CONNECT {target}");
+        config.emit(SocksServerEvent::Connect(target.to_string()));
     }
 
     let mut outbound = match connect_tor(&client, &target).await {
         Ok(stream) => stream,
         Err(error) => {
             write_reply(&mut inbound, REPLY_GENERAL_FAILURE).await?;
+            config.emit(SocksServerEvent::ConnectionFailed(format!(
+                "failed to connect to {target}: {error}"
+            )));
             return Err(SocksServerError::Tor(format!(
                 "failed to connect to {target}: {error}"
             )));

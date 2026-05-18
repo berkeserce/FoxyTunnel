@@ -11,7 +11,7 @@ use std::{
 };
 use tor_rtcompat::PreferredRuntime;
 
-pub use socks::{SocksServer, SocksServerConfig, SocksTarget};
+pub use socks::{SocksServer, SocksServerConfig, SocksServerEvent, SocksTarget};
 
 /// Application configuration loaded from TOML.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,9 +80,10 @@ impl FoxyTunnelConfig {
 
     /// Builds local SOCKS server configuration from app configuration.
     #[must_use]
-    pub const fn socks_server_config(&self) -> SocksServerConfig {
+    pub fn socks_server_config(&self) -> SocksServerConfig {
         SocksServerConfig {
             log_connections: self.log_connections,
+            event_sender: None,
         }
     }
 }

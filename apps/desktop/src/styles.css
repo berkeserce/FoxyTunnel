@@ -194,8 +194,14 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   border-bottom: 1px solid #dbe4de;
   padding: 12px 14px;
+}
+
+.log-actions {
+  display: flex;
+  gap: 8px;
 }
 
 pre {
