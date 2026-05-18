@@ -6,11 +6,11 @@ use std::{
     error::Error,
     fmt, io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    sync::Arc,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::mpsc::UnboundedSender,
 };
 use tor_rtcompat::PreferredRuntime;
 
@@ -92,6 +92,9 @@ impl From<io::Error> for SocksServerError {
 /// Result type for SOCKS server operations.
 pub type SocksServerResult<T> = Result<T, SocksServerError>;
 
+/// Callback type for SOCKS server events.
+pub type SocksEventSink = Arc<dyn Fn(SocksServerEvent) + Send + Sync>;
+
 /// Runtime events emitted by the SOCKS server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SocksServerEvent {
@@ -111,12 +114,22 @@ pub struct SocksServer {
 }
 
 /// Runtime configuration for the local SOCKS5 server.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct SocksServerConfig {
     /// Whether accepted CONNECT targets should be printed to stderr.
     pub log_connections: bool,
     /// Optional event sink for GUI or service-layer logs.
-    pub event_sender: Option<UnboundedSender<SocksServerEvent>>,
+    pub event_sink: Option<SocksEventSink>,
+}
+
+impl fmt::Debug for SocksServerConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SocksServerConfig")
+            .field("log_connections", &self.log_connections)
+            .field("event_sink", &self.event_sink.is_some())
+            .finish()
+    }
 }
 
 impl SocksServer {
@@ -165,8 +178,8 @@ impl SocksServer {
 
 impl SocksServerConfig {
     fn emit(&self, event: SocksServerEvent) {
-        if let Some(sender) = &self.event_sender {
-            let _ = sender.send(event);
+        if let Some(sink) = &self.event_sink {
+            sink(event);
         }
     }
 }
@@ -345,8 +358,9 @@ async fn write_reply(stream: &mut TcpStream, reply: u8) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SocksServerConfig, SocksTarget};
+    use super::{SocksServerConfig, SocksServerEvent, SocksTarget};
     use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn socks_server_config_disables_connection_logs_by_default() {
@@ -378,5 +392,24 @@ mod tests {
         let error = std::io::Error::new(std::io::ErrorKind::NotConnected, "closed");
 
         assert!(super::is_expected_disconnect(&error));
+    }
+
+    #[test]
+    fn socks_server_config_emits_events_to_sink() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured_events = Arc::clone(&events);
+        let config = SocksServerConfig {
+            event_sink: Some(Arc::new(move |event| {
+                captured_events.lock().expect("events lock").push(event);
+            })),
+            ..SocksServerConfig::default()
+        };
+
+        config.emit(SocksServerEvent::Connect("example.com:443".to_string()));
+
+        assert_eq!(
+            events.lock().expect("events lock").as_slice(),
+            &[SocksServerEvent::Connect("example.com:443".to_string())]
+        );
     }
 }

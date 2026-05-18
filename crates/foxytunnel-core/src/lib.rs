@@ -83,7 +83,7 @@ impl FoxyTunnelConfig {
     pub fn socks_server_config(&self) -> SocksServerConfig {
         SocksServerConfig {
             log_connections: self.log_connections,
-            event_sender: None,
+            event_sink: None,
         }
     }
 }

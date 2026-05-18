@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 use tauri::{Emitter, State};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 
 const MAX_LOG_LINES: usize = 500;
 
@@ -24,7 +24,6 @@ struct AppState {
 struct ProxyState {
     status: ProxyStatus,
     handle: Option<TaskHandle>,
-    event_handle: Option<TaskHandle>,
     last_error: Option<String>,
 }
 
@@ -142,10 +141,9 @@ async fn start_socks(
 
     let mut proxy = state.proxy.lock().await;
     match result {
-        Ok((handle, event_handle)) => {
+        Ok(handle) => {
             proxy.status = ProxyStatus::Running;
             proxy.handle = Some(handle);
-            proxy.event_handle = Some(event_handle);
             proxy.last_error = None;
         }
         Err(error) => {
@@ -163,14 +161,14 @@ async fn start_proxy_runtime(
     app: &tauri::AppHandle,
     state: &Arc<AppState>,
     config: FoxyTunnelConfig,
-) -> Result<(TaskHandle, TaskHandle), String> {
+) -> Result<TaskHandle, String> {
     emit_log(app, state, "info", "Creating Tor client");
     let mut service = TorService::create(config.tor_service_config())
         .await
         .map_err(|error| error.to_string())?;
 
     bootstrap_service(app, state, &mut service, config.bootstrap_timeout_seconds).await?;
-    let (event_handle, socks_config) = build_socks_event_bridge(app, state, &config);
+    let socks_config = build_socks_config(app, state, &config);
 
     emit_log(app, state, "info", "Starting local SOCKS listener");
     let proxy_app = app.clone();
@@ -186,7 +184,7 @@ async fn start_proxy_runtime(
         }
     });
 
-    Ok((handle, event_handle))
+    Ok(handle)
 }
 
 async fn bootstrap_service(
@@ -218,32 +216,27 @@ async fn bootstrap_service(
     Ok(())
 }
 
-fn build_socks_event_bridge(
+fn build_socks_config(
     app: &tauri::AppHandle,
     state: &Arc<AppState>,
     config: &FoxyTunnelConfig,
-) -> (TaskHandle, foxytunnel_core::SocksServerConfig) {
-    let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
+) -> foxytunnel_core::SocksServerConfig {
     let mut socks_config = config.socks_server_config();
-    socks_config.event_sender = Some(event_sender);
+    let app = app.clone();
+    let state = Arc::clone(state);
+    socks_config.event_sink = Some(Arc::new(move |event| {
+        let (level, message) = match event {
+            SocksServerEvent::Listening(endpoint) => {
+                ("info", format!("SOCKS listener ready on {endpoint}"))
+            }
+            SocksServerEvent::Connect(target) => ("info", format!("SOCKS CONNECT {target}")),
+            SocksServerEvent::ConnectionFailed(message) => ("error", message),
+        };
 
-    let event_app = app.clone();
-    let event_state = Arc::clone(state);
-    let event_handle = tauri::async_runtime::spawn(async move {
-        while let Some(event) = event_receiver.recv().await {
-            let (level, message) = match event {
-                SocksServerEvent::Listening(endpoint) => {
-                    ("info", format!("SOCKS listener ready on {endpoint}"))
-                }
-                SocksServerEvent::Connect(target) => ("info", format!("SOCKS CONNECT {target}")),
-                SocksServerEvent::ConnectionFailed(message) => ("error", message),
-            };
+        emit_log(&app, &state, level, message);
+    }));
 
-            emit_log(&event_app, &event_state, level, message);
-        }
-    });
-
-    (event_handle, socks_config)
+    socks_config
 }
 
 #[tauri::command]
@@ -251,9 +244,6 @@ async fn stop_socks(state: State<'_, Arc<AppState>>) -> Result<StatusDto, String
     {
         let mut proxy = state.proxy.lock().await;
         if let Some(handle) = proxy.handle.take() {
-            handle.abort();
-        }
-        if let Some(handle) = proxy.event_handle.take() {
             handle.abort();
         }
         proxy.status = ProxyStatus::Stopped;
