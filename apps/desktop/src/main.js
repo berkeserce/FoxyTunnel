@@ -15,10 +15,22 @@ const portInput = document.querySelector("#port-input");
 const timeoutInput = document.querySelector("#timeout-input");
 const logInput = document.querySelector("#log-input");
 
+let lastLogSequence = 0;
+let pollTimer = undefined;
+
 function writeLog(message, level = "info") {
   const time = new Date().toLocaleTimeString();
   const prefix = level === "error" ? "ERROR" : level.toUpperCase();
   messageLog.textContent = `[${time}] ${prefix}: ${message}\n${messageLog.textContent}`;
+}
+
+function appendBackendLog(entry) {
+  if (entry.sequence <= lastLogSequence) {
+    return;
+  }
+
+  lastLogSequence = entry.sequence;
+  writeLog(entry.message, entry.level);
 }
 
 function renderStatus(status, { syncSettings = false } = {}) {
@@ -49,7 +61,15 @@ function renderStatus(status, { syncSettings = false } = {}) {
 async function refreshStatus(options = {}) {
   const status = await invoke("get_status");
   renderStatus(status, options);
+  await syncActivityLogs();
   writeLog(`Status refreshed: ${status.status} (${status.endpoint})`);
+}
+
+async function syncActivityLogs() {
+  const logs = await invoke("get_activity_logs");
+  for (const entry of logs.entries) {
+    appendBackendLog(entry);
+  }
 }
 
 async function startSocks() {
@@ -76,9 +96,15 @@ async function stopSocks() {
 
 async function bindBackendLogs() {
   await listen("proxy-log", (event) => {
-    const payload = event.payload;
-    writeLog(payload.message, payload.level);
+    appendBackendLog(event.payload);
   });
+}
+
+function startLogPolling() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(() => {
+    syncActivityLogs().catch((error) => writeLog(String(error), "error"));
+  }, 1500);
 }
 
 startButton.addEventListener("click", () => {
@@ -99,9 +125,12 @@ refreshButton.addEventListener("click", () => {
   refreshStatus().catch((error) => writeLog(String(error), "error"));
 });
 
-clearLogButton.addEventListener("click", () => {
+clearLogButton.addEventListener("click", async () => {
+  await invoke("clear_activity_logs");
+  lastLogSequence = 0;
   messageLog.textContent = "Ready.";
 });
 
 bindBackendLogs().catch((error) => writeLog(String(error), "error"));
+startLogPolling();
 refreshStatus({ syncSettings: true }).catch((error) => writeLog(String(error), "error"));
