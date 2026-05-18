@@ -40,12 +40,24 @@ Run the temporary CLI entry point:
 cargo run -p foxytunnel-app
 cargo run -p foxytunnel-app -- --bootstrap
 cargo run -p foxytunnel-app -- --socks
+cargo run -p foxytunnel-app -- --socks --config foxytunnel.toml
 cargo run -p foxytunnel-app -- --socks --port 19051 --log
 ```
 
 The `--socks` command starts a local SOCKS5 proxy after Tor bootstrap succeeds.
 The default endpoint is `127.0.0.1:19050`. Use `--port` to change the port and
 `--log` to print accepted SOCKS CONNECT targets.
+
+Example `foxytunnel.toml`:
+
+```toml
+socks_host = "127.0.0.1"
+socks_port = 19050
+log_connections = false
+bootstrap_timeout_seconds = 120
+arti_state_dir = "target/foxytunnel/arti-state"
+arti_cache_dir = "target/foxytunnel/arti-cache"
+```
 
 ## License
 

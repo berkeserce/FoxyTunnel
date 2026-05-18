@@ -3,6 +3,7 @@
 mod socks;
 
 use arti_client::{BootstrapBehavior, TorClient, TorClientConfig, config::TorClientConfigBuilder};
+use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt};
 use std::{
     fs,
@@ -11,6 +12,103 @@ use std::{
 use tor_rtcompat::PreferredRuntime;
 
 pub use socks::{SocksServer, SocksServerConfig, SocksTarget};
+
+/// Application configuration loaded from TOML.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FoxyTunnelConfig {
+    /// SOCKS listen host.
+    pub socks_host: String,
+    /// SOCKS listen port.
+    pub socks_port: u16,
+    /// Whether accepted SOCKS CONNECT targets should be logged.
+    pub log_connections: bool,
+    /// Tor bootstrap timeout in seconds.
+    pub bootstrap_timeout_seconds: u64,
+    /// Arti persistent state directory.
+    pub arti_state_dir: PathBuf,
+    /// Arti cache directory.
+    pub arti_cache_dir: PathBuf,
+}
+
+impl Default for FoxyTunnelConfig {
+    fn default() -> Self {
+        Self {
+            socks_host: "127.0.0.1".to_string(),
+            socks_port: 19_050,
+            log_connections: false,
+            bootstrap_timeout_seconds: 120,
+            arti_state_dir: PathBuf::from("target/foxytunnel/arti-state"),
+            arti_cache_dir: PathBuf::from("target/foxytunnel/arti-cache"),
+        }
+    }
+}
+
+impl FoxyTunnelConfig {
+    /// Loads TOML configuration from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error if the file cannot be read, or a TOML decode error
+    /// if the file is malformed.
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
+        let contents = fs::read_to_string(path).map_err(ConfigError::Read)?;
+        toml::from_str(&contents).map_err(ConfigError::Decode)
+    }
+
+    /// Serializes the configuration to pretty TOML.
+    ///
+    /// # Errors
+    ///
+    /// Returns a TOML encode error if serialization fails.
+    pub fn to_toml_string(&self) -> Result<String, ConfigError> {
+        toml::to_string_pretty(self).map_err(ConfigError::Encode)
+    }
+
+    /// Builds a Tor service configuration from app configuration.
+    #[must_use]
+    pub fn tor_service_config(&self) -> TorServiceConfig {
+        TorServiceConfig {
+            socks_endpoint: SocksEndpoint {
+                host: self.socks_host.clone(),
+                port: self.socks_port,
+            },
+            ..TorServiceConfig::default()
+        }
+        .with_storage_dirs(self.arti_state_dir.clone(), self.arti_cache_dir.clone())
+    }
+
+    /// Builds local SOCKS server configuration from app configuration.
+    #[must_use]
+    pub const fn socks_server_config(&self) -> SocksServerConfig {
+        SocksServerConfig {
+            log_connections: self.log_connections,
+        }
+    }
+}
+
+/// Configuration loading or serialization error.
+#[derive(Debug)]
+pub enum ConfigError {
+    /// Reading the config file failed.
+    Read(std::io::Error),
+    /// Parsing TOML failed.
+    Decode(toml::de::Error),
+    /// Serializing TOML failed.
+    Encode(toml::ser::Error),
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read(error) => write!(formatter, "failed to read config: {error}"),
+            Self::Decode(error) => write!(formatter, "failed to parse config: {error}"),
+            Self::Encode(error) => write!(formatter, "failed to serialize config: {error}"),
+        }
+    }
+}
+
+impl Error for ConfigError {}
 
 /// Runtime protection modes exposed by the application.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -287,8 +385,8 @@ impl TorService {
 #[cfg(test)]
 mod tests {
     use super::{
-        BootstrapBehavior, ProtectionMode, SocksEndpoint, TorServiceConfig, TorServiceError,
-        TorStatus,
+        BootstrapBehavior, FoxyTunnelConfig, ProtectionMode, SocksEndpoint, TorServiceConfig,
+        TorServiceError, TorStatus,
     };
 
     #[test]
@@ -356,5 +454,47 @@ mod tests {
             storage_dirs.cache_dir(),
             std::path::Path::new("target/test-cache")
         );
+    }
+
+    #[test]
+    fn app_config_defaults_are_loopback_only() {
+        let config = FoxyTunnelConfig::default();
+
+        assert_eq!(config.socks_host, "127.0.0.1");
+        assert_eq!(config.socks_port, 19_050);
+        assert!(!config.log_connections);
+        assert_eq!(config.bootstrap_timeout_seconds, 120);
+    }
+
+    #[test]
+    fn app_config_builds_runtime_configs() {
+        let config = FoxyTunnelConfig {
+            socks_port: 19_051,
+            log_connections: true,
+            ..FoxyTunnelConfig::default()
+        };
+        let tor_config = config.tor_service_config();
+        let socks_config = config.socks_server_config();
+
+        assert_eq!(tor_config.socks_endpoint.authority(), "127.0.0.1:19051");
+        assert!(socks_config.log_connections);
+    }
+
+    #[test]
+    fn app_config_parses_partial_toml() {
+        let config: FoxyTunnelConfig = toml::from_str("socks_port = 19052\n")
+            .expect("partial config should parse with defaults");
+
+        assert_eq!(config.socks_host, "127.0.0.1");
+        assert_eq!(config.socks_port, 19_052);
+    }
+
+    #[test]
+    fn app_config_serializes_to_toml() {
+        let config = FoxyTunnelConfig::default();
+        let toml = config.to_toml_string().expect("config should serialize");
+
+        assert!(toml.contains("socks_host"));
+        assert!(toml.contains("bootstrap_timeout_seconds"));
     }
 }

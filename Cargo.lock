@@ -1194,7 +1194,9 @@ name = "foxytunnel-core"
 version = "0.1.0"
 dependencies = [
  "arti-client",
+ "serde",
  "tokio",
+ "toml 1.1.2+spec-1.1.0",
  "tor-rtcompat",
 ]
 
