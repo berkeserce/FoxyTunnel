@@ -1,5 +1,7 @@
 //! Core state and configuration for `FoxyTunnel`.
 
+mod socks;
+
 use arti_client::{BootstrapBehavior, TorClient, TorClientConfig, config::TorClientConfigBuilder};
 use std::{error::Error, fmt};
 use std::{
@@ -7,6 +9,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use tor_rtcompat::PreferredRuntime;
+
+pub use socks::{SocksServer, SocksTarget};
 
 /// Runtime protection modes exposed by the application.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -152,6 +156,8 @@ pub enum TorServiceError {
     CreateClient(String),
     /// Tor bootstrap failed.
     Bootstrap(String),
+    /// Running the local SOCKS proxy failed.
+    SocksProxy(String),
     /// A Tor client operation was requested before a client exists.
     ClientUnavailable,
 }
@@ -163,6 +169,7 @@ impl fmt::Display for TorServiceError {
                 write!(formatter, "failed to create Tor client: {message}")
             }
             Self::Bootstrap(message) => write!(formatter, "failed to bootstrap Tor: {message}"),
+            Self::SocksProxy(message) => write!(formatter, "SOCKS proxy failed: {message}"),
             Self::ClientUnavailable => formatter.write_str("Tor client is not available"),
         }
     }
@@ -231,6 +238,22 @@ impl TorService {
     #[must_use]
     pub fn client(&self) -> Option<TorClient<PreferredRuntime>> {
         self.client.clone()
+    }
+
+    /// Runs a local SOCKS5 proxy backed by the Arti client.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TorServiceError::ClientUnavailable`] if the service has no
+    /// client, or [`TorServiceError::SocksProxy`] if binding or proxying fails.
+    pub async fn run_socks_proxy(&self) -> TorServiceResult<()> {
+        let client = self.client().ok_or(TorServiceError::ClientUnavailable)?;
+        let server = SocksServer::new(self.socks_endpoint().clone(), client);
+
+        server
+            .run()
+            .await
+            .map_err(|error| TorServiceError::SocksProxy(error.to_string()))
     }
 
     /// Bootstraps Tor and marks the service ready if successful.
@@ -310,6 +333,13 @@ mod tests {
         let error = TorServiceError::ClientUnavailable;
 
         assert_eq!(error.to_string(), "Tor client is not available");
+    }
+
+    #[test]
+    fn socks_proxy_error_formats_for_users() {
+        let error = TorServiceError::SocksProxy("bind failed".to_string());
+
+        assert_eq!(error.to_string(), "SOCKS proxy failed: bind failed");
     }
 
     #[test]

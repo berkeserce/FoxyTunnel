@@ -44,6 +44,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
             print_status(mode, &tor_service, &tunnel_plan);
         }
+        AppCommand::Socks => {
+            let mut tor_service = tor_service;
+
+            println!("Bootstrapping Tor...");
+            bootstrap_tor(&runtime, &mut tor_service)?;
+
+            println!(
+                "SOCKS5 listening on {}",
+                tor_service.socks_endpoint().authority()
+            );
+            runtime.block_on(tor_service.run_socks_proxy())?;
+        }
         AppCommand::Help => unreachable!("help exits before runtime startup"),
     }
 
@@ -89,6 +101,7 @@ fn print_help() {
     println!("Usage:");
     println!("  foxytunnel-app");
     println!("  foxytunnel-app --bootstrap");
+    println!("  foxytunnel-app --socks");
     println!("  foxytunnel-app --help");
 }
 
@@ -96,6 +109,7 @@ fn print_help() {
 enum AppCommand {
     Status,
     Bootstrap,
+    Socks,
     Help,
 }
 
@@ -106,6 +120,7 @@ impl AppCommand {
         for arg in args {
             command = match arg.as_str() {
                 "--bootstrap" | "bootstrap" => Self::Bootstrap,
+                "--socks" | "socks" => Self::Socks,
                 "--help" | "-h" | "help" => Self::Help,
                 unknown => {
                     return Err(io::Error::new(
@@ -134,6 +149,14 @@ mod tests {
         assert_eq!(
             AppCommand::parse(["--bootstrap".to_string()]).expect("command"),
             AppCommand::Bootstrap
+        );
+    }
+
+    #[test]
+    fn command_accepts_socks_flag() {
+        assert_eq!(
+            AppCommand::parse(["--socks".to_string()]).expect("command"),
+            AppCommand::Socks
         );
     }
 

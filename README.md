@@ -34,6 +34,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+Run the temporary CLI entry point:
+
+```powershell
+cargo run -p foxytunnel-app
+cargo run -p foxytunnel-app -- --bootstrap
+cargo run -p foxytunnel-app -- --socks
+```
+
+The `--socks` command starts a local SOCKS5 proxy on `127.0.0.1:19050`
+after Tor bootstrap succeeds.
+
 ## License
 
 Licensed under either of:
