@@ -9,7 +9,6 @@ authors.workspace = true
 [dependencies]
 foxytunnel-core = { path = "../foxytunnel-core" }
 foxytunnel-tunnel = { path = "../foxytunnel-tunnel" }
-rustls = { version = "0.23.40", default-features = false, features = ["ring"] }
 tokio = { version = "1.52.3", default-features = false, features = ["io-util", "net", "rt-multi-thread", "sync", "time"] }
 
 [lints]

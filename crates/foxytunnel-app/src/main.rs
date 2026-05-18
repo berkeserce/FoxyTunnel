@@ -12,8 +12,6 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    install_crypto_provider();
-
     let options = AppOptions::parse(env::args().skip(1))?;
     if options.command == AppCommand::Help {
         print_help();
@@ -55,10 +53,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn install_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 fn bootstrap_tor(

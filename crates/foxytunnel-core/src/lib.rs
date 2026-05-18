@@ -297,6 +297,8 @@ impl TorService {
     /// Returns [`TorServiceError::CreateClient`] if Arti cannot create the
     /// underlying client or acquire its local resources.
     pub async fn create(config: TorServiceConfig) -> TorServiceResult<Self> {
+        install_crypto_provider();
+
         let client = TorClient::builder()
             .config(config.arti_config()?)
             .bootstrap_behavior(config.bootstrap_behavior())
@@ -380,6 +382,10 @@ impl TorService {
             }
         }
     }
+}
+
+fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 #[cfg(test)]
