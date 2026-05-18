@@ -1,5 +1,13 @@
 //! Core state and configuration for `FoxyTunnel`.
 
+use arti_client::{BootstrapBehavior, TorClient, TorClientConfig, config::TorClientConfigBuilder};
+use std::{error::Error, fmt};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+use tor_rtcompat::PreferredRuntime;
+
 /// Runtime protection modes exposed by the application.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ProtectionMode {
@@ -59,9 +67,206 @@ impl SocksEndpoint {
     }
 }
 
+/// Configuration for the embedded Tor runtime.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TorServiceConfig {
+    /// Loopback SOCKS endpoint planned for tunnel and app modes.
+    pub socks_endpoint: SocksEndpoint,
+    /// Whether stream usage may trigger automatic Tor bootstrap.
+    pub bootstrap_on_demand: bool,
+    /// Optional storage directories for Arti state and cache.
+    pub storage_dirs: Option<TorStorageDirs>,
+}
+
+impl TorServiceConfig {
+    /// Sets explicit Arti state and cache directories.
+    #[must_use]
+    pub fn with_storage_dirs(
+        mut self,
+        state_dir: impl Into<PathBuf>,
+        cache_dir: impl Into<PathBuf>,
+    ) -> Self {
+        self.storage_dirs = Some(TorStorageDirs {
+            state_dir: state_dir.into(),
+            cache_dir: cache_dir.into(),
+        });
+        self
+    }
+
+    /// Returns the matching Arti bootstrap behavior.
+    #[must_use]
+    pub const fn bootstrap_behavior(&self) -> BootstrapBehavior {
+        if self.bootstrap_on_demand {
+            BootstrapBehavior::OnDemand
+        } else {
+            BootstrapBehavior::Manual
+        }
+    }
+
+    fn arti_config(&self) -> TorServiceResult<TorClientConfig> {
+        let Some(storage_dirs) = &self.storage_dirs else {
+            return Ok(TorClientConfig::default());
+        };
+
+        storage_dirs.prepare()?;
+
+        TorClientConfigBuilder::from_directories(storage_dirs.state_dir(), storage_dirs.cache_dir())
+            .build()
+            .map_err(|error| TorServiceError::CreateClient(error.to_string()))
+    }
+}
+
+/// Explicit Arti storage directories.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TorStorageDirs {
+    /// Directory for persistent Arti state.
+    pub state_dir: PathBuf,
+    /// Directory for cached Arti directory information.
+    pub cache_dir: PathBuf,
+}
+
+impl TorStorageDirs {
+    /// Returns the persistent state directory.
+    #[must_use]
+    pub fn state_dir(&self) -> &Path {
+        &self.state_dir
+    }
+
+    /// Returns the cache directory.
+    #[must_use]
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
+    fn prepare(&self) -> TorServiceResult<()> {
+        fs::create_dir_all(&self.state_dir)
+            .and_then(|()| fs::create_dir_all(&self.cache_dir))
+            .map_err(|error| TorServiceError::CreateClient(error.to_string()))
+    }
+}
+
+/// Errors from the embedded Tor runtime boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TorServiceError {
+    /// Creating the Arti client failed.
+    CreateClient(String),
+    /// Tor bootstrap failed.
+    Bootstrap(String),
+    /// A Tor client operation was requested before a client exists.
+    ClientUnavailable,
+}
+
+impl fmt::Display for TorServiceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CreateClient(message) => {
+                write!(formatter, "failed to create Tor client: {message}")
+            }
+            Self::Bootstrap(message) => write!(formatter, "failed to bootstrap Tor: {message}"),
+            Self::ClientUnavailable => formatter.write_str("Tor client is not available"),
+        }
+    }
+}
+
+impl Error for TorServiceError {}
+
+/// Result type for Tor service operations.
+pub type TorServiceResult<T> = Result<T, TorServiceError>;
+
+/// Embedded Arti-backed Tor runtime.
+#[derive(Clone)]
+pub struct TorService {
+    config: TorServiceConfig,
+    client: Option<TorClient<PreferredRuntime>>,
+    status: TorStatus,
+}
+
+impl TorService {
+    /// Creates an Arti client without connecting to the Tor network yet.
+    ///
+    /// The default configuration uses manual bootstrap so the app can wait for
+    /// explicit user action before making network connections.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TorServiceError::CreateClient`] if Arti cannot create the
+    /// underlying client or acquire its local resources.
+    pub async fn create(config: TorServiceConfig) -> TorServiceResult<Self> {
+        let client = TorClient::builder()
+            .config(config.arti_config()?)
+            .bootstrap_behavior(config.bootstrap_behavior())
+            .create_unbootstrapped_async()
+            .await
+            .map_err(|error| TorServiceError::CreateClient(error.to_string()))?;
+
+        Ok(Self {
+            config,
+            client: Some(client),
+            status: TorStatus::Stopped,
+        })
+    }
+
+    /// Returns the immutable service configuration.
+    #[must_use]
+    pub const fn config(&self) -> &TorServiceConfig {
+        &self.config
+    }
+
+    /// Returns the current Tor status.
+    #[must_use]
+    pub const fn status(&self) -> &TorStatus {
+        &self.status
+    }
+
+    /// Returns the configured SOCKS endpoint.
+    #[must_use]
+    pub const fn socks_endpoint(&self) -> &SocksEndpoint {
+        &self.config.socks_endpoint
+    }
+
+    /// Returns a clone of the underlying Arti client.
+    ///
+    /// Cloning an Arti client is cheap and keeps the same underlying runtime
+    /// handles, which is useful when the future SOCKS server needs a client.
+    #[must_use]
+    pub fn client(&self) -> Option<TorClient<PreferredRuntime>> {
+        self.client.clone()
+    }
+
+    /// Bootstraps Tor and marks the service ready if successful.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TorServiceError::ClientUnavailable`] if the service has no
+    /// client, or [`TorServiceError::Bootstrap`] if Arti cannot bootstrap.
+    pub async fn bootstrap(&mut self) -> TorServiceResult<()> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or(TorServiceError::ClientUnavailable)?;
+
+        self.status = TorStatus::Bootstrapping(0);
+
+        match client.bootstrap().await {
+            Ok(()) => {
+                self.status = TorStatus::Ready;
+                Ok(())
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.status = TorStatus::Failed(message.clone());
+                Err(TorServiceError::Bootstrap(message))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ProtectionMode, SocksEndpoint, TorStatus};
+    use super::{
+        BootstrapBehavior, ProtectionMode, SocksEndpoint, TorServiceConfig, TorServiceError,
+        TorStatus,
+    };
 
     #[test]
     fn protection_mode_defaults_to_off() {
@@ -79,5 +284,47 @@ mod tests {
     fn tor_status_reports_readiness() {
         assert!(TorStatus::Ready.is_ready());
         assert!(!TorStatus::Stopped.is_ready());
+    }
+
+    #[test]
+    fn tor_service_uses_manual_bootstrap_by_default() {
+        let config = TorServiceConfig::default();
+
+        assert_eq!(config.socks_endpoint.authority(), "127.0.0.1:19050");
+        assert!(!config.bootstrap_on_demand);
+        assert_eq!(config.bootstrap_behavior(), BootstrapBehavior::Manual);
+    }
+
+    #[test]
+    fn tor_service_can_enable_on_demand_bootstrap() {
+        let config = TorServiceConfig {
+            bootstrap_on_demand: true,
+            ..TorServiceConfig::default()
+        };
+
+        assert_eq!(config.bootstrap_behavior(), BootstrapBehavior::OnDemand);
+    }
+
+    #[test]
+    fn tor_service_error_formats_for_users() {
+        let error = TorServiceError::ClientUnavailable;
+
+        assert_eq!(error.to_string(), "Tor client is not available");
+    }
+
+    #[test]
+    fn tor_service_config_accepts_storage_dirs() {
+        let config =
+            TorServiceConfig::default().with_storage_dirs("target/test-state", "target/test-cache");
+        let storage_dirs = config.storage_dirs.expect("storage dirs should be set");
+
+        assert_eq!(
+            storage_dirs.state_dir(),
+            std::path::Path::new("target/test-state")
+        );
+        assert_eq!(
+            storage_dirs.cache_dir(),
+            std::path::Path::new("target/test-cache")
+        );
     }
 }
