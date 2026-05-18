@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "apps/desktop/src-tauri",
     "crates/foxytunnel-app",
     "crates/foxytunnel-core",
     "crates/foxytunnel-tunnel",

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FoxyTunnel</title>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">FoxyTunnel</p>
+          <h1>Tor SOCKS Control</h1>
+        </div>
+        <span id="status-pill" class="status-pill">Loading</span>
+      </section>
+
+      <section class="panel">
+        <div class="metric">
+          <span>Status</span>
+          <strong id="status-text">Loading</strong>
+        </div>
+        <div class="metric">
+          <span>Endpoint</span>
+          <strong id="endpoint-text">127.0.0.1:19050</strong>
+        </div>
+        <div class="metric">
+          <span>Timeout</span>
+          <strong id="timeout-text">120s</strong>
+        </div>
+      </section>
+
+      <section class="settings">
+        <label>
+          <span>Port</span>
+          <input id="port-input" type="number" min="1" max="65535" value="19050" />
+        </label>
+        <label>
+          <span>Timeout</span>
+          <input id="timeout-input" type="number" min="10" max="600" value="120" />
+        </label>
+        <label class="checkbox">
+          <input id="log-input" type="checkbox" />
+          <span>Log connections</span>
+        </label>
+      </section>
+
+      <section class="controls">
+        <button id="start-button" type="button">Start SOCKS</button>
+        <button id="stop-button" type="button" class="secondary">Stop</button>
+      </section>
+
+      <section class="log-panel">
+        <div class="log-header">
+          <span>Activity</span>
+          <button id="refresh-button" type="button" class="ghost">Refresh</button>
+        </div>
+        <pre id="message-log">Ready.</pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -48,6 +48,17 @@ The `--socks` command starts a local SOCKS5 proxy after Tor bootstrap succeeds.
 The default endpoint is `127.0.0.1:19050`. Use `--port` to change the port and
 `--log` to print accepted SOCKS CONNECT targets.
 
+Run the desktop GUI:
+
+```powershell
+cd apps/desktop
+npm install
+npm run tauri dev
+```
+
+The first GUI screen can start and stop the local SOCKS proxy, set the SOCKS
+port, change the bootstrap timeout, and enable connection logging.
+
 Example `foxytunnel.toml`:
 
 ```toml
