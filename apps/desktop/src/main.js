@@ -21,7 +21,10 @@ let pollTimer = undefined;
 function writeLog(message, level = "info") {
   const time = new Date().toLocaleTimeString();
   const prefix = level === "error" ? "ERROR" : level.toUpperCase();
-  messageLog.textContent = `[${time}] ${prefix}: ${message}\n${messageLog.textContent}`;
+  const line = `[${time}] ${prefix}: ${message}`;
+  messageLog.textContent = messageLog.textContent.trimEnd();
+  messageLog.textContent += `${messageLog.textContent ? "\n" : ""}${line}`;
+  messageLog.scrollTop = messageLog.scrollHeight;
 }
 
 function appendBackendLog(entry) {
