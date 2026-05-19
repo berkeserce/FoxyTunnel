@@ -6,10 +6,14 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
-use tauri::{Emitter, State};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent};
 use tokio::sync::Mutex;
 
 const MAX_LOG_LINES: usize = 500;
+const MAIN_WINDOW_LABEL: &str = "main";
+const PANEL_MARGIN: i32 = 12;
 
 type TaskHandle = tauri::async_runtime::JoinHandle<()>;
 
@@ -328,6 +332,22 @@ fn status_from_parts(config: &FoxyTunnelConfig, proxy: &ProxyState) -> StatusDto
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            setup_tray(app.handle())?;
+            if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                configure_panel_window(&window)?;
+            }
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == MAIN_WINDOW_LABEL
+                && let WindowEvent::CloseRequested { api, .. } = event
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .manage(Arc::new(AppState::default()))
         .invoke_handler(tauri::generate_handler![
             clear_activity_logs,
@@ -338,4 +358,101 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running FoxyTunnel desktop app");
+}
+
+fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let show = MenuItemBuilder::with_id("show_panel", "Open FoxyTunnel").build(app)?;
+    let hide = MenuItemBuilder::with_id("hide_panel", "Hide").build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .item(&show)
+        .item(&hide)
+        .separator()
+        .item(&quit)
+        .build()?;
+
+    let mut tray = TrayIconBuilder::with_id("foxytunnel-tray")
+        .tooltip("FoxyTunnel")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show_panel" => show_panel(app),
+            "hide_panel" => hide_panel(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_panel(tray.app_handle());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.build(app)?;
+
+    Ok(())
+}
+
+fn configure_panel_window(window: &WebviewWindow) -> tauri::Result<()> {
+    window.set_skip_taskbar(true)?;
+    position_panel_window(window)?;
+    window.hide()?;
+
+    Ok(())
+}
+
+fn toggle_panel(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+
+    match window.is_visible() {
+        Ok(true) => {
+            let _ = window.hide();
+        }
+        _ => {
+            show_window(&window);
+        }
+    }
+}
+
+fn show_panel(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        show_window(&window);
+    }
+}
+
+fn hide_panel(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.hide();
+    }
+}
+
+fn show_window(window: &WebviewWindow) {
+    let _ = position_panel_window(window);
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+fn position_panel_window(window: &WebviewWindow) -> tauri::Result<()> {
+    let Some(monitor) = window.current_monitor()? else {
+        return Ok(());
+    };
+
+    let work_area = monitor.work_area();
+    let outer_size = window.outer_size()?;
+    let x = work_area.position.x + PANEL_MARGIN;
+    let work_area_height = i32::try_from(work_area.size.height).unwrap_or(i32::MAX);
+    let window_height = i32::try_from(outer_size.height).unwrap_or(i32::MAX);
+    let y = work_area.position.y + work_area_height - window_height - PANEL_MARGIN;
+
+    window.set_position(PhysicalPosition::new(x, y))
 }
