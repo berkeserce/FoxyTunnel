@@ -8,7 +8,8 @@ use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Emitter, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent};
+use tauri::{Emitter, Manager, PhysicalPosition, Rect, State, WebviewWindow, WindowEvent};
+use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
 
 const MAX_LOG_LINES: usize = 500;
@@ -22,6 +23,7 @@ struct AppState {
     config: Mutex<FoxyTunnelConfig>,
     proxy: Mutex<ProxyState>,
     logs: StdMutex<VecDeque<LogDto>>,
+    last_tray_anchor: StdMutex<Option<TrayAnchor>>,
 }
 
 #[derive(Default)]
@@ -101,6 +103,16 @@ fn clear_activity_logs(state: State<'_, Arc<AppState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn hide_panel_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn start_socks(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -154,9 +166,19 @@ async fn start_socks(
             proxy.status = ProxyStatus::Error;
             proxy.last_error = Some(error.clone());
             emit_log(&app, &state, "error", error.clone());
+            notify_user(&app, "FoxyTunnel error", error.clone());
             return Err(error);
         }
     }
+
+    notify_user(
+        &app,
+        "FoxyTunnel is running",
+        format!(
+            "SOCKS proxy is listening on {}:{}",
+            config.socks_host, config.socks_port
+        ),
+    );
 
     Ok(status_from_parts(&config, &proxy))
 }
@@ -179,12 +201,15 @@ async fn start_proxy_runtime(
     let proxy_state = Arc::clone(state);
     let handle = tauri::async_runtime::spawn(async move {
         if let Err(error) = service.run_socks_proxy(socks_config).await {
-            emit_log(
-                &proxy_app,
-                &proxy_state,
-                "error",
-                format!("SOCKS proxy stopped: {error}"),
-            );
+            let error = format!("SOCKS proxy stopped: {error}");
+            {
+                let mut proxy = proxy_state.proxy.lock().await;
+                proxy.status = ProxyStatus::Error;
+                proxy.last_error = Some(error.clone());
+                proxy.handle = None;
+            }
+            emit_log(&proxy_app, &proxy_state, "error", error.clone());
+            notify_user(&proxy_app, "FoxyTunnel error", error);
         }
     });
 
@@ -244,7 +269,10 @@ fn build_socks_config(
 }
 
 #[tauri::command]
-async fn stop_socks(state: State<'_, Arc<AppState>>) -> Result<StatusDto, String> {
+async fn stop_socks(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<StatusDto, String> {
     {
         let mut proxy = state.proxy.lock().await;
         if let Some(handle) = proxy.handle.take() {
@@ -253,6 +281,9 @@ async fn stop_socks(state: State<'_, Arc<AppState>>) -> Result<StatusDto, String
         proxy.status = ProxyStatus::Stopped;
         proxy.last_error = None;
     }
+
+    emit_log(&app, &state, "info", "SOCKS proxy stopped");
+    notify_user(&app, "FoxyTunnel stopped", "SOCKS proxy is stopped.");
 
     Ok(status_dto(&state).await)
 }
@@ -265,6 +296,15 @@ fn emit_log(
 ) {
     let entry = push_log(state, level, message.into());
     let _ = app.emit("proxy-log", entry);
+}
+
+fn notify_user(app: &tauri::AppHandle, title: impl Into<String>, body: impl Into<String>) {
+    let _ = app
+        .notification()
+        .builder()
+        .title(title.into())
+        .body(body.into())
+        .show();
 }
 
 fn push_log(state: &Arc<AppState>, level: &'static str, message: String) -> LogDto {
@@ -332,6 +372,8 @@ fn status_from_parts(config: &FoxyTunnelConfig, proxy: &ProxyState) -> StatusDto
 
 fn main() {
     tauri::Builder::default()
+        .manage(Arc::new(AppState::default()))
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             setup_tray(app.handle())?;
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
@@ -348,11 +390,11 @@ fn main() {
                 let _ = window.hide();
             }
         })
-        .manage(Arc::new(AppState::default()))
         .invoke_handler(tauri::generate_handler![
             clear_activity_logs,
             get_activity_logs,
             get_status,
+            hide_panel_window,
             start_socks,
             stop_socks
         ])
@@ -382,13 +424,17 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
+            if let Some(anchor) = tray_event_anchor(&event) {
+                remember_tray_anchor(tray.app_handle(), anchor);
+            }
+
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
             } = event
             {
-                toggle_panel(tray.app_handle());
+                toggle_panel(tray.app_handle(), tray_event_anchor(&event));
             }
         });
 
@@ -402,14 +448,17 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 fn configure_panel_window(window: &WebviewWindow) -> tauri::Result<()> {
+    window.set_decorations(false)?;
+    window.set_resizable(false)?;
+    window.set_always_on_top(true)?;
     window.set_skip_taskbar(true)?;
-    position_panel_window(window)?;
+    position_panel_window(window, None)?;
     window.hide()?;
 
     Ok(())
 }
 
-fn toggle_panel(app: &tauri::AppHandle) {
+fn toggle_panel(app: &tauri::AppHandle, anchor: Option<TrayAnchor>) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
         return;
     };
@@ -419,14 +468,14 @@ fn toggle_panel(app: &tauri::AppHandle) {
             let _ = window.hide();
         }
         _ => {
-            show_window(&window);
+            show_window(&window, anchor.or_else(|| last_tray_anchor(app)));
         }
     }
 }
 
 fn show_panel(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        show_window(&window);
+        show_window(&window, last_tray_anchor(app));
     }
 }
 
@@ -436,23 +485,154 @@ fn hide_panel(app: &tauri::AppHandle) {
     }
 }
 
-fn show_window(window: &WebviewWindow) {
-    let _ = position_panel_window(window);
+fn show_window(window: &WebviewWindow, anchor: Option<TrayAnchor>) {
+    let _ = position_panel_window(window, anchor);
     let _ = window.show();
     let _ = window.set_focus();
 }
 
-fn position_panel_window(window: &WebviewWindow) -> tauri::Result<()> {
-    let Some(monitor) = window.current_monitor()? else {
+fn position_panel_window(window: &WebviewWindow, anchor: Option<TrayAnchor>) -> tauri::Result<()> {
+    let monitor = if let Some(anchor) = anchor {
+        window
+            .monitor_from_point(anchor.center_x(), anchor.center_y())?
+            .or(window.current_monitor()?)
+            .or(window.primary_monitor()?)
+    } else {
+        window.current_monitor()?.or(window.primary_monitor()?)
+    };
+
+    let Some(monitor) = monitor else {
         return Ok(());
     };
 
     let work_area = monitor.work_area();
     let outer_size = window.outer_size()?;
-    let x = work_area.position.x + PANEL_MARGIN;
+    let work_area_width = i32::try_from(work_area.size.width).unwrap_or(i32::MAX);
     let work_area_height = i32::try_from(work_area.size.height).unwrap_or(i32::MAX);
+    let window_width = i32::try_from(outer_size.width).unwrap_or(i32::MAX);
     let window_height = i32::try_from(outer_size.height).unwrap_or(i32::MAX);
-    let y = work_area.position.y + work_area_height - window_height - PANEL_MARGIN;
+    let work_left = work_area.position.x;
+    let work_top = work_area.position.y;
+    let work_right = work_left.saturating_add(work_area_width);
+    let work_bottom = work_top.saturating_add(work_area_height);
+
+    let (preferred_x, preferred_y) = if let Some(anchor) = anchor {
+        let x = anchor
+            .center_x_i32()
+            .saturating_sub(window_width.saturating_div(2));
+        let mut y = work_bottom
+            .saturating_sub(window_height)
+            .saturating_sub(PANEL_MARGIN);
+
+        if anchor.center_y() < f64::from(work_top.saturating_add(work_area_height / 2)) {
+            y = anchor
+                .y
+                .saturating_add(anchor.height)
+                .saturating_add(PANEL_MARGIN);
+        }
+
+        (x, y)
+    } else {
+        (
+            work_right
+                .saturating_sub(window_width)
+                .saturating_sub(PANEL_MARGIN),
+            work_bottom
+                .saturating_sub(window_height)
+                .saturating_sub(PANEL_MARGIN),
+        )
+    };
+
+    let x = clamp_panel_axis(preferred_x, work_left, work_right, window_width);
+    let y = clamp_panel_axis(preferred_y, work_top, work_bottom, window_height);
 
     window.set_position(PhysicalPosition::new(x, y))
+}
+
+fn remember_tray_anchor(app: &tauri::AppHandle, anchor: TrayAnchor) {
+    let state = app.state::<Arc<AppState>>();
+    if let Ok(mut last_tray_anchor) = state.last_tray_anchor.lock() {
+        *last_tray_anchor = Some(anchor);
+    }
+}
+
+fn last_tray_anchor(app: &tauri::AppHandle) -> Option<TrayAnchor> {
+    let state = app.state::<Arc<AppState>>();
+    state
+        .last_tray_anchor
+        .lock()
+        .ok()
+        .and_then(|last_tray_anchor| *last_tray_anchor)
+}
+
+fn tray_event_anchor(event: &TrayIconEvent) -> Option<TrayAnchor> {
+    match event {
+        TrayIconEvent::Click { position, rect, .. }
+        | TrayIconEvent::DoubleClick { position, rect, .. }
+        | TrayIconEvent::Enter { position, rect, .. }
+        | TrayIconEvent::Move { position, rect, .. }
+        | TrayIconEvent::Leave { position, rect, .. } => {
+            Some(TrayAnchor::from_event(*position, *rect))
+        }
+        _ => None,
+    }
+}
+
+fn clamp_panel_axis(preferred: i32, work_start: i32, work_end: i32, window_size: i32) -> i32 {
+    let min = work_start.saturating_add(PANEL_MARGIN);
+    let max = work_end
+        .saturating_sub(window_size)
+        .saturating_sub(PANEL_MARGIN);
+
+    if max < min {
+        work_start
+    } else {
+        preferred.clamp(min, max)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TrayAnchor {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+impl TrayAnchor {
+    fn from_event(position: PhysicalPosition<f64>, rect: Rect) -> Self {
+        let rect_position = rect.position.to_physical::<i32>(1.0);
+        let rect_size = rect.size.to_physical::<u32>(1.0);
+        let width = i32::try_from(rect_size.width).unwrap_or(i32::MAX);
+        let height = i32::try_from(rect_size.height).unwrap_or(i32::MAX);
+
+        if width > 0 && height > 0 {
+            Self {
+                x: rect_position.x,
+                y: rect_position.y,
+                width,
+                height,
+            }
+        } else {
+            let position = position.cast::<i32>();
+            Self {
+                x: position.x,
+                y: position.y,
+                width: 0,
+                height: 0,
+            }
+        }
+    }
+
+    fn center_x(self) -> f64 {
+        f64::from(self.x) + f64::from(self.width) / 2.0
+    }
+
+    fn center_y(self) -> f64 {
+        f64::from(self.y) + f64::from(self.height) / 2.0
+    }
+
+    fn center_x_i32(self) -> i32 {
+        self.x.saturating_add(self.width.saturating_div(2))
+    }
 }

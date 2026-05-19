@@ -16,7 +16,11 @@
         "title": "FoxyTunnel",
         "width": 420,
         "height": 620,
-        "resizable": false
+        "resizable": false,
+        "decorations": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "visible": false
       }
     ]
   },

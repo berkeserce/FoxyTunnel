@@ -11,6 +11,7 @@ const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
 const refreshButton = document.querySelector("#refresh-button");
 const clearLogButton = document.querySelector("#clear-log-button");
+const closeButton = document.querySelector("#close-button");
 const portInput = document.querySelector("#port-input");
 const timeoutInput = document.querySelector("#timeout-input");
 const logInput = document.querySelector("#log-input");
@@ -132,6 +133,16 @@ clearLogButton.addEventListener("click", async () => {
   await invoke("clear_activity_logs");
   lastLogSequence = 0;
   messageLog.textContent = "Ready.";
+});
+
+closeButton.addEventListener("click", () => {
+  invoke("hide_panel_window").catch((error) => writeLog(String(error), "error"));
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    invoke("hide_panel_window").catch((error) => writeLog(String(error), "error"));
+  }
 });
 
 bindBackendLogs().catch((error) => writeLog(String(error), "error"));
