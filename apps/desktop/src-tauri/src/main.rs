@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
+use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, PhysicalPosition, Rect, State, WebviewWindow, WindowEvent};
@@ -15,6 +16,7 @@ use tokio::sync::Mutex;
 const MAX_LOG_LINES: usize = 500;
 const MAIN_WINDOW_LABEL: &str = "main";
 const PANEL_MARGIN: i32 = 16;
+const APP_ICON_BYTES: &[u8] = include_bytes!("../icons/fav1.png");
 
 type TaskHandle = tauri::async_runtime::JoinHandle<()>;
 
@@ -438,7 +440,9 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         });
 
-    if let Some(icon) = app.default_window_icon().cloned() {
+    if let Ok(icon) = Image::from_bytes(APP_ICON_BYTES) {
+        tray = tray.icon(icon);
+    } else if let Some(icon) = app.default_window_icon().cloned() {
         tray = tray.icon(icon);
     }
 

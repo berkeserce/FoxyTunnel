@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="apps/desktop/src-tauri/icons/banner.png" alt="FoxyTunnel" width="720">
+</p>
+
 # FoxyTunnel
 
 FoxyTunnel is a Windows-first Rust application for routing supported traffic
