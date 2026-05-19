@@ -7,55 +7,57 @@
   </head>
   <body>
     <main class="shell">
-      <section class="topbar">
-        <div>
-          <p class="eyebrow">FoxyTunnel</p>
-          <h1>Tor SOCKS Control</h1>
+      <header class="app-header">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">FoxyTunnel</p>
+            <h1>Tor Control</h1>
+          </div>
         </div>
-        <div class="topbar-actions">
+        <div class="header-actions">
           <span id="status-pill" class="status-pill">Loading</span>
-          <button id="close-button" class="close-button" type="button" aria-label="Close">X</button>
+          <button id="close-button" class="icon-button" type="button" aria-label="Close">X</button>
         </div>
-      </section>
+      </header>
 
-      <section class="panel">
-        <div class="metric">
-          <span>Status</span>
-          <strong id="status-text">Loading</strong>
-        </div>
-        <div class="metric">
-          <span>Endpoint</span>
+      <section class="connection-panel">
+        <div>
+          <span class="label">Endpoint</span>
           <strong id="endpoint-text">127.0.0.1:19050</strong>
         </div>
-        <div class="metric">
-          <span>Timeout</span>
-          <strong id="timeout-text">120s</strong>
-        </div>
+        <dl class="summary-grid">
+          <div>
+            <dt>Port</dt>
+            <dd id="port-text">19050</dd>
+          </div>
+          <div>
+            <dt>Timeout</dt>
+            <dd id="timeout-text">120s</dd>
+          </div>
+        </dl>
       </section>
 
-      <section class="settings">
-        <label>
+      <button id="action-button" class="action-button" type="button">Start SOCKS</button>
+
+      <section class="settings-panel">
+        <label class="field">
           <span>Port</span>
           <input id="port-input" type="number" min="1" max="65535" value="19050" />
         </label>
-        <label>
-          <span>Timeout</span>
+        <label class="field">
+          <span>Bootstrap</span>
           <input id="timeout-input" type="number" min="10" max="600" value="120" />
         </label>
-        <label class="checkbox">
+        <label class="check-row">
           <input id="log-input" type="checkbox" />
           <span>Log connections</span>
         </label>
       </section>
 
-      <section class="controls">
-        <button id="start-button" type="button">Start SOCKS</button>
-        <button id="stop-button" type="button" class="secondary">Stop</button>
-      </section>
-
-      <section class="log-panel">
-        <div class="log-header">
-          <span>Activity</span>
+      <section class="activity-panel">
+        <div class="activity-header">
+          <span class="label">Live log</span>
           <div class="log-actions">
             <button id="refresh-button" type="button" class="ghost">Refresh</button>
             <button id="clear-log-button" type="button" class="ghost">Clear</button>

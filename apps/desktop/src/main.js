@@ -3,12 +3,11 @@ import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 
 const statusPill = document.querySelector("#status-pill");
-const statusText = document.querySelector("#status-text");
 const endpointText = document.querySelector("#endpoint-text");
+const portText = document.querySelector("#port-text");
 const timeoutText = document.querySelector("#timeout-text");
 const messageLog = document.querySelector("#message-log");
-const startButton = document.querySelector("#start-button");
-const stopButton = document.querySelector("#stop-button");
+const actionButton = document.querySelector("#action-button");
 const refreshButton = document.querySelector("#refresh-button");
 const clearLogButton = document.querySelector("#clear-log-button");
 const closeButton = document.querySelector("#close-button");
@@ -16,15 +15,21 @@ const portInput = document.querySelector("#port-input");
 const timeoutInput = document.querySelector("#timeout-input");
 const logInput = document.querySelector("#log-input");
 
+const MAX_VISIBLE_LOG_LINES = 120;
+
 let lastLogSequence = 0;
 let pollTimer = undefined;
+let currentStatus = "Stopped";
+let actionInFlight = false;
 
 function writeLog(message, level = "info") {
   const time = new Date().toLocaleTimeString();
   const prefix = level === "error" ? "ERROR" : level.toUpperCase();
   const line = `[${time}] ${prefix}: ${message}`;
-  messageLog.textContent = messageLog.textContent.trimEnd();
-  messageLog.textContent += `${messageLog.textContent ? "\n" : ""}${line}`;
+  const existing = messageLog.textContent.trim() === "Ready." ? "" : messageLog.textContent.trimEnd();
+  const lines = `${existing}${existing ? "\n" : ""}${line}`.split("\n");
+
+  messageLog.textContent = lines.slice(-MAX_VISIBLE_LOG_LINES).join("\n");
   messageLog.scrollTop = messageLog.scrollHeight;
 }
 
@@ -37,11 +42,33 @@ function appendBackendLog(entry) {
   writeLog(entry.message, entry.level);
 }
 
+function isEditableStatus(status) {
+  return status === "Stopped" || status === "Error";
+}
+
+function renderAction(status) {
+  const isBootstrapping = status === "Bootstrapping";
+  const isRunning = status === "Running";
+
+  actionButton.dataset.mode = isRunning ? "stop" : "start";
+
+  if (isBootstrapping) {
+    actionButton.textContent = "Bootstrapping...";
+  } else if (isRunning) {
+    actionButton.textContent = "Stop";
+  } else {
+    actionButton.textContent = "Start";
+  }
+
+  actionButton.disabled = actionInFlight || isBootstrapping;
+}
+
 function renderStatus(status, { syncSettings = false } = {}) {
+  currentStatus = status.status;
   statusPill.textContent = status.status;
   statusPill.dataset.status = status.status.toLowerCase();
-  statusText.textContent = status.status;
   endpointText.textContent = status.endpoint;
+  portText.textContent = status.socks_port;
   timeoutText.textContent = `${status.bootstrap_timeout_seconds}s`;
 
   if (syncSettings) {
@@ -50,12 +77,11 @@ function renderStatus(status, { syncSettings = false } = {}) {
     logInput.checked = status.log_connections;
   }
 
-  const isBusy = status.status === "Running" || status.status === "Bootstrapping";
-  startButton.disabled = isBusy;
-  stopButton.disabled = !isBusy;
-  portInput.disabled = isBusy;
-  timeoutInput.disabled = isBusy;
-  logInput.disabled = isBusy;
+  const canEdit = isEditableStatus(status.status) && !actionInFlight;
+  portInput.disabled = !canEdit;
+  timeoutInput.disabled = !canEdit;
+  logInput.disabled = !canEdit;
+  renderAction(status.status);
 
   if (status.last_error) {
     writeLog(status.last_error, "error");
@@ -77,25 +103,49 @@ async function syncActivityLogs() {
 }
 
 async function startSocks() {
-  startButton.disabled = true;
+  actionInFlight = true;
+  renderAction(currentStatus);
   writeLog("Starting SOCKS proxy...");
-  const status = await invoke("start_socks", {
-    options: {
-      socks_port: Number(portInput.value),
-      log_connections: logInput.checked,
-      bootstrap_timeout_seconds: Number(timeoutInput.value),
-    },
-  });
-  renderStatus(status, { syncSettings: true });
-  writeLog(`SOCKS proxy running on ${status.endpoint}`);
+
+  try {
+    const status = await invoke("start_socks", {
+      options: {
+        socks_port: Number(portInput.value),
+        log_connections: logInput.checked,
+        bootstrap_timeout_seconds: Number(timeoutInput.value),
+      },
+    });
+    actionInFlight = false;
+    renderStatus(status, { syncSettings: true });
+    writeLog(`SOCKS proxy running on ${status.endpoint}`);
+  } catch (error) {
+    actionInFlight = false;
+    throw error;
+  }
 }
 
 async function stopSocks() {
-  stopButton.disabled = true;
+  actionInFlight = true;
+  renderAction(currentStatus);
   writeLog("Stopping SOCKS proxy...");
-  const status = await invoke("stop_socks");
-  renderStatus(status);
-  writeLog("SOCKS proxy stopped.");
+
+  try {
+    const status = await invoke("stop_socks");
+    actionInFlight = false;
+    renderStatus(status);
+    writeLog("SOCKS proxy stopped.");
+  } catch (error) {
+    actionInFlight = false;
+    throw error;
+  }
+}
+
+async function handlePrimaryAction() {
+  if (currentStatus === "Running") {
+    await stopSocks();
+  } else if (isEditableStatus(currentStatus)) {
+    await startSocks();
+  }
 }
 
 async function bindBackendLogs() {
@@ -111,15 +161,8 @@ function startLogPolling() {
   }, 1500);
 }
 
-startButton.addEventListener("click", () => {
-  startSocks().catch((error) => {
-    writeLog(String(error), "error");
-    refreshStatus().catch(() => {});
-  });
-});
-
-stopButton.addEventListener("click", () => {
-  stopSocks().catch((error) => {
+actionButton.addEventListener("click", () => {
+  handlePrimaryAction().catch((error) => {
     writeLog(String(error), "error");
     refreshStatus().catch(() => {});
   });

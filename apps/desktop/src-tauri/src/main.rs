@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 
 const MAX_LOG_LINES: usize = 500;
 const MAIN_WINDOW_LABEL: &str = "main";
-const PANEL_MARGIN: i32 = 12;
+const PANEL_MARGIN: i32 = 16;
 
 type TaskHandle = tauri::async_runtime::JoinHandle<()>;
 
@@ -515,34 +515,12 @@ fn position_panel_window(window: &WebviewWindow, anchor: Option<TrayAnchor>) -> 
     let work_top = work_area.position.y;
     let work_right = work_left.saturating_add(work_area_width);
     let work_bottom = work_top.saturating_add(work_area_height);
-
-    let (preferred_x, preferred_y) = if let Some(anchor) = anchor {
-        let x = anchor
-            .center_x_i32()
-            .saturating_sub(window_width.saturating_div(2));
-        let mut y = work_bottom
-            .saturating_sub(window_height)
-            .saturating_sub(PANEL_MARGIN);
-
-        if anchor.center_y() < f64::from(work_top.saturating_add(work_area_height / 2)) {
-            y = anchor
-                .y
-                .saturating_add(anchor.height)
-                .saturating_add(PANEL_MARGIN);
-        }
-
-        (x, y)
-    } else {
-        (
-            work_right
-                .saturating_sub(window_width)
-                .saturating_sub(PANEL_MARGIN),
-            work_bottom
-                .saturating_sub(window_height)
-                .saturating_sub(PANEL_MARGIN),
-        )
-    };
-
+    let preferred_x = work_right
+        .saturating_sub(window_width)
+        .saturating_sub(PANEL_MARGIN);
+    let preferred_y = work_bottom
+        .saturating_sub(window_height)
+        .saturating_sub(PANEL_MARGIN);
     let x = clamp_panel_axis(preferred_x, work_left, work_right, window_width);
     let y = clamp_panel_axis(preferred_y, work_top, work_bottom, window_height);
 
@@ -630,9 +608,5 @@ impl TrayAnchor {
 
     fn center_y(self) -> f64 {
         f64::from(self.y) + f64::from(self.height) / 2.0
-    }
-
-    fn center_x_i32(self) -> i32 {
-        self.x.saturating_add(self.width.saturating_div(2))
     }
 }
