@@ -8,6 +8,9 @@ const portText = document.querySelector("#port-text");
 const timeoutText = document.querySelector("#timeout-text");
 const messageLog = document.querySelector("#message-log");
 const actionButton = document.querySelector("#action-button");
+const copyEndpointButton = document.querySelector("#copy-endpoint-button");
+const testTorButton = document.querySelector("#test-tor-button");
+const torTestText = document.querySelector("#tor-test-text");
 const refreshButton = document.querySelector("#refresh-button");
 const clearLogButton = document.querySelector("#clear-log-button");
 const closeButton = document.querySelector("#close-button");
@@ -19,8 +22,10 @@ const MAX_VISIBLE_LOG_LINES = 120;
 
 let lastLogSequence = 0;
 let pollTimer = undefined;
+let settingsSaveTimer = undefined;
 let currentStatus = "Stopped";
 let actionInFlight = false;
+let torTestInFlight = false;
 
 function writeLog(message, level = "info") {
   const time = new Date().toLocaleTimeString();
@@ -63,6 +68,11 @@ function renderAction(status) {
   actionButton.disabled = actionInFlight || isBootstrapping;
 }
 
+function renderTorTest(status) {
+  testTorButton.disabled = torTestInFlight || status !== "Running";
+  testTorButton.textContent = torTestInFlight ? "Testing..." : "Test Tor";
+}
+
 function renderStatus(status, { syncSettings = false } = {}) {
   currentStatus = status.status;
   statusPill.textContent = status.status;
@@ -82,6 +92,7 @@ function renderStatus(status, { syncSettings = false } = {}) {
   timeoutInput.disabled = !canEdit;
   logInput.disabled = !canEdit;
   renderAction(status.status);
+  renderTorTest(status.status);
 
   if (status.last_error) {
     writeLog(status.last_error, "error");
@@ -93,6 +104,36 @@ async function refreshStatus(options = {}) {
   renderStatus(status, options);
   await syncActivityLogs();
   writeLog(`Status refreshed: ${status.status} (${status.endpoint})`);
+}
+
+function readOptions() {
+  return {
+    socks_port: Number(portInput.value),
+    log_connections: logInput.checked,
+    bootstrap_timeout_seconds: Number(timeoutInput.value),
+  };
+}
+
+function scheduleSettingsSave() {
+  if (!isEditableStatus(currentStatus) || actionInFlight) {
+    return;
+  }
+
+  clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(() => {
+    saveSettings().catch((error) => writeLog(String(error), "error"));
+  }, 450);
+}
+
+async function saveSettings() {
+  if (!isEditableStatus(currentStatus) || actionInFlight) {
+    return;
+  }
+
+  const status = await invoke("save_settings", {
+    options: readOptions(),
+  });
+  renderStatus(status, { syncSettings: true });
 }
 
 async function syncActivityLogs() {
@@ -109,11 +150,7 @@ async function startSocks() {
 
   try {
     const status = await invoke("start_socks", {
-      options: {
-        socks_port: Number(portInput.value),
-        log_connections: logInput.checked,
-        bootstrap_timeout_seconds: Number(timeoutInput.value),
-      },
+      options: readOptions(),
     });
     actionInFlight = false;
     renderStatus(status, { syncSettings: true });
@@ -148,6 +185,57 @@ async function handlePrimaryAction() {
   }
 }
 
+async function copyEndpoint() {
+  const endpoint = endpointText.textContent.trim();
+
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(endpoint);
+  } else {
+    copyTextFallback(endpoint);
+  }
+
+  writeLog("Endpoint copied.");
+}
+
+function copyTextFallback(text) {
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.opacity = "0";
+  document.body.append(textArea);
+  textArea.select();
+
+  try {
+    document.execCommand("copy");
+  } finally {
+    textArea.remove();
+  }
+}
+
+async function testTorConnection() {
+  if (currentStatus !== "Running") {
+    torTestText.textContent = "Start proxy first";
+    torTestText.dataset.status = "unavailable";
+    return;
+  }
+
+  torTestInFlight = true;
+  renderTorTest(currentStatus);
+  torTestText.textContent = "Testing...";
+  torTestText.dataset.status = "";
+
+  try {
+    const result = await invoke("test_tor_connection");
+    torTestText.textContent = result.ip ? result.ip : result.message;
+    torTestText.title = result.message;
+    torTestText.dataset.status = result.status;
+  } finally {
+    torTestInFlight = false;
+    renderTorTest(currentStatus);
+  }
+}
+
 async function bindBackendLogs() {
   await listen("proxy-log", (event) => {
     appendBackendLog(event.payload);
@@ -168,6 +256,18 @@ actionButton.addEventListener("click", () => {
   });
 });
 
+copyEndpointButton.addEventListener("click", () => {
+  copyEndpoint().catch((error) => writeLog(String(error), "error"));
+});
+
+testTorButton.addEventListener("click", () => {
+  testTorConnection().catch((error) => {
+    torTestText.textContent = String(error);
+    torTestText.dataset.status = "unavailable";
+    writeLog(String(error), "error");
+  });
+});
+
 refreshButton.addEventListener("click", () => {
   refreshStatus().catch((error) => writeLog(String(error), "error"));
 });
@@ -181,6 +281,10 @@ clearLogButton.addEventListener("click", async () => {
 closeButton.addEventListener("click", () => {
   invoke("hide_panel_window").catch((error) => writeLog(String(error), "error"));
 });
+
+portInput.addEventListener("input", scheduleSettingsSave);
+timeoutInput.addEventListener("input", scheduleSettingsSave);
+logInput.addEventListener("change", scheduleSettingsSave);
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {

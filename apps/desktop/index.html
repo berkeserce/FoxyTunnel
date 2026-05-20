@@ -22,9 +22,12 @@
       </header>
 
       <section class="connection-panel">
-        <div>
-          <span class="label">Endpoint</span>
-          <strong id="endpoint-text">127.0.0.1:19050</strong>
+        <div class="connection-head">
+          <div>
+            <span class="label">Endpoint</span>
+            <strong id="endpoint-text">127.0.0.1:19050</strong>
+          </div>
+          <button id="copy-endpoint-button" type="button" class="mini-button">Copy</button>
         </div>
         <dl class="summary-grid">
           <div>
@@ -36,6 +39,10 @@
             <dd id="timeout-text">120s</dd>
           </div>
         </dl>
+        <div class="connection-actions">
+          <button id="test-tor-button" type="button" class="ghost">Test Tor</button>
+          <span id="tor-test-text" class="connection-note">Not tested</span>
+        </div>
       </section>
 
       <button id="action-button" class="action-button" type="button">Start SOCKS</button>

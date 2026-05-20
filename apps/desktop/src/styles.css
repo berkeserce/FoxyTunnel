@@ -192,12 +192,36 @@ h1 {
   padding: 12px;
 }
 
+.connection-head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .connection-panel strong {
   display: block;
   margin-top: 5px;
   overflow-wrap: anywhere;
   color: var(--text);
   font-size: 1.02rem;
+}
+
+.mini-button {
+  height: 30px;
+  flex: 0 0 auto;
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+  padding: 0 10px;
+  color: var(--amber);
+  font-size: 0.82rem;
+}
+
+.mini-button:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--text);
 }
 
 .summary-grid {
@@ -225,6 +249,33 @@ dd {
   overflow-wrap: anywhere;
   color: var(--text);
   font-weight: 850;
+}
+
+.connection-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  margin-top: 10px;
+}
+
+.connection-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-note[data-status="tor"] {
+  color: var(--amber);
+}
+
+.connection-note[data-status="not_tor"],
+.connection-note[data-status="unavailable"] {
+  color: #ffb5a8;
 }
 
 .action-button {

@@ -1,8 +1,10 @@
 //! `FoxyTunnel` desktop application entry point.
 
-use foxytunnel_core::{FoxyTunnelConfig, SocksServerEvent, TorService};
+use foxytunnel_core::{ConfigError, FoxyTunnelConfig, SocksServerEvent, TorService};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
@@ -23,6 +25,7 @@ type TaskHandle = tauri::async_runtime::JoinHandle<()>;
 #[derive(Default)]
 struct AppState {
     config: Mutex<FoxyTunnelConfig>,
+    config_path: StdMutex<Option<PathBuf>>,
     proxy: Mutex<ProxyState>,
     logs: StdMutex<VecDeque<LogDto>>,
     last_tray_anchor: StdMutex<Option<TrayAnchor>>,
@@ -64,6 +67,30 @@ struct LogDto {
 #[derive(Serialize)]
 struct LogsDto {
     entries: Vec<LogDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TorCheckStatus {
+    Tor,
+    NotTor,
+    Unavailable,
+}
+
+#[derive(Serialize)]
+struct TorCheckDto {
+    status: TorCheckStatus,
+    is_tor: bool,
+    ip: Option<String>,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct TorCheckResponse {
+    #[serde(rename = "IsTor")]
+    is_tor: bool,
+    #[serde(rename = "IP")]
+    ip: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -115,6 +142,35 @@ fn hide_panel_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn save_settings(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+    options: StartOptions,
+) -> Result<StatusDto, String> {
+    if !is_proxy_editable(&state).await {
+        return Err("Settings can only be changed while FoxyTunnel is stopped.".to_string());
+    }
+
+    let saved_config = {
+        let mut config = state.config.lock().await;
+        let mut next_config = config.clone();
+        apply_start_options(&mut next_config, options)?;
+        persist_config(&app, &state, &next_config)?;
+        *config = next_config.clone();
+        next_config
+    };
+
+    emit_log(
+        &app,
+        &state,
+        "info",
+        format!("Settings saved for {}", endpoint_from_config(&saved_config)),
+    );
+
+    Ok(status_dto(&state).await)
+}
+
+#[tauri::command]
 async fn start_socks(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -163,6 +219,9 @@ async fn start_socks(
             proxy.status = ProxyStatus::Running;
             proxy.handle = Some(handle);
             proxy.last_error = None;
+            if let Err(error) = persist_config(&app, &state, &config) {
+                emit_log(&app, &state, "error", error);
+            }
         }
         Err(error) => {
             proxy.status = ProxyStatus::Error;
@@ -183,6 +242,34 @@ async fn start_socks(
     );
 
     Ok(status_from_parts(&config, &proxy))
+}
+
+#[tauri::command]
+async fn test_tor_connection(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<TorCheckDto, String> {
+    let (status, endpoint) = {
+        let config = state.config.lock().await;
+        let proxy = state.proxy.lock().await;
+        (proxy.status, endpoint_from_config(&config))
+    };
+
+    if status != ProxyStatus::Running {
+        let result = TorCheckDto::unavailable("Start the SOCKS proxy before testing Tor.");
+        emit_log(&app, &state, "error", result.message.clone());
+        return Ok(result);
+    }
+
+    emit_log(&app, &state, "info", "Testing Tor connection");
+    let result = match check_tor_via_socks(&endpoint).await {
+        Ok(result) => result,
+        Err(error) => TorCheckDto::unavailable(format!("Tor check unavailable: {error}")),
+    };
+    let level = if result.is_tor { "info" } else { "error" };
+    emit_log(&app, &state, level, result.message.clone());
+
+    Ok(result)
 }
 
 async fn start_proxy_runtime(
@@ -290,6 +377,61 @@ async fn stop_socks(
     Ok(status_dto(&state).await)
 }
 
+async fn check_tor_via_socks(endpoint: &str) -> Result<TorCheckDto, String> {
+    let proxy = reqwest::Proxy::all(format!("socks5h://{endpoint}"))
+        .map_err(|error| format!("failed to configure SOCKS proxy: {error}"))?;
+    let client = reqwest::Client::builder()
+        .proxy(proxy)
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("failed to create Tor check client: {error}"))?;
+    let response = client
+        .get("https://check.torproject.org/api/ip")
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Tor Check returned an error: {error}"))?
+        .json::<TorCheckResponse>()
+        .await
+        .map_err(|error| format!("failed to read Tor Check response: {error}"))?;
+
+    Ok(tor_check_from_response(response))
+}
+
+fn tor_check_from_response(response: TorCheckResponse) -> TorCheckDto {
+    if response.is_tor {
+        let suffix = response
+            .ip
+            .as_deref()
+            .map_or_else(String::new, |ip| format!(" Exit IP: {ip}."));
+        TorCheckDto {
+            status: TorCheckStatus::Tor,
+            is_tor: true,
+            ip: response.ip,
+            message: format!("Tor connection verified.{suffix}"),
+        }
+    } else {
+        TorCheckDto {
+            status: TorCheckStatus::NotTor,
+            is_tor: false,
+            ip: response.ip,
+            message: "Connection reached Tor Check but was not identified as Tor.".to_string(),
+        }
+    }
+}
+
+impl TorCheckDto {
+    fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            status: TorCheckStatus::Unavailable,
+            is_tor: false,
+            ip: None,
+            message: message.into(),
+        }
+    }
+}
+
 fn emit_log(
     app: &tauri::AppHandle,
     state: &Arc<AppState>,
@@ -346,6 +488,12 @@ async fn is_proxy_active(state: &Arc<AppState>) -> bool {
     proxy.status == ProxyStatus::Running || proxy.status == ProxyStatus::Bootstrapping
 }
 
+async fn is_proxy_editable(state: &Arc<AppState>) -> bool {
+    let proxy = state.proxy.lock().await;
+
+    matches!(proxy.status, ProxyStatus::Stopped | ProxyStatus::Error)
+}
+
 fn apply_start_options(config: &mut FoxyTunnelConfig, options: StartOptions) -> Result<(), String> {
     if options.socks_port == 0 {
         return Err("SOCKS port must be between 1 and 65535".to_string());
@@ -361,10 +509,85 @@ fn apply_start_options(config: &mut FoxyTunnelConfig, options: StartOptions) -> 
     Ok(())
 }
 
+fn load_persisted_config(app: &tauri::AppHandle, state: &Arc<AppState>) -> Result<(), String> {
+    let path = config_file_path(app)?;
+    set_config_path(state, path.clone())?;
+
+    match FoxyTunnelConfig::load(&path) {
+        Ok(config) => {
+            tauri::async_runtime::block_on(async {
+                *state.config.lock().await = config;
+            });
+            Ok(())
+        }
+        Err(ConfigError::Read(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn persist_config(
+    app: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    config: &FoxyTunnelConfig,
+) -> Result<(), String> {
+    let path = ensure_config_path(app, state)?;
+    write_config_to_file(&path, config)
+}
+
+fn ensure_config_path(app: &tauri::AppHandle, state: &Arc<AppState>) -> Result<PathBuf, String> {
+    if let Some(path) = state
+        .config_path
+        .lock()
+        .map_err(|_| "config path is unavailable".to_string())?
+        .clone()
+    {
+        return Ok(path);
+    }
+
+    let path = config_file_path(app)?;
+    set_config_path(state, path.clone())?;
+
+    Ok(path)
+}
+
+fn set_config_path(state: &Arc<AppState>, path: PathBuf) -> Result<(), String> {
+    *state
+        .config_path
+        .lock()
+        .map_err(|_| "config path is unavailable".to_string())? = Some(path);
+
+    Ok(())
+}
+
+fn config_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|path| config_file_path_from_dir(&path))
+        .map_err(|error| format!("failed to locate app config directory: {error}"))
+}
+
+fn config_file_path_from_dir(dir: &Path) -> PathBuf {
+    dir.join("config.toml")
+}
+
+fn write_config_to_file(path: &Path, config: &FoxyTunnelConfig) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create config directory: {error}"))?;
+    }
+
+    let contents = config.to_toml_string().map_err(|error| error.to_string())?;
+    fs::write(path, contents).map_err(|error| format!("failed to write config: {error}"))
+}
+
+fn endpoint_from_config(config: &FoxyTunnelConfig) -> String {
+    format!("{}:{}", config.socks_host, config.socks_port)
+}
+
 fn status_from_parts(config: &FoxyTunnelConfig, proxy: &ProxyState) -> StatusDto {
     StatusDto {
         status: proxy.status,
-        endpoint: format!("{}:{}", config.socks_host, config.socks_port),
+        endpoint: endpoint_from_config(config),
         socks_port: config.socks_port,
         log_connections: config.log_connections,
         bootstrap_timeout_seconds: config.bootstrap_timeout_seconds,
@@ -377,6 +600,10 @@ fn main() {
         .manage(Arc::new(AppState::default()))
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            let state = Arc::clone(app.state::<Arc<AppState>>().inner());
+            if let Err(error) = load_persisted_config(app.handle(), &state) {
+                emit_log(app.handle(), &state, "error", error);
+            }
             setup_tray(app.handle())?;
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                 configure_panel_window(&window)?;
@@ -397,8 +624,10 @@ fn main() {
             get_activity_logs,
             get_status,
             hide_panel_window,
+            save_settings,
             start_socks,
-            stop_socks
+            stop_socks,
+            test_tor_connection
         ])
         .run(tauri::generate_context!())
         .expect("error while running FoxyTunnel desktop app");
@@ -612,5 +841,74 @@ impl TrayAnchor {
 
     fn center_y(self) -> f64 {
         f64::from(self.y) + f64::from(self.height) / 2.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        StartOptions, TorCheckResponse, TorCheckStatus, apply_start_options,
+        config_file_path_from_dir, tor_check_from_response, write_config_to_file,
+    };
+    use foxytunnel_core::FoxyTunnelConfig;
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn tor_check_json_parses_verified_response() {
+        let response: TorCheckResponse =
+            serde_json::from_str(r#"{"IsTor":true,"IP":"185.220.101.1"}"#)
+                .expect("Tor Check JSON should parse");
+        let result = tor_check_from_response(response);
+
+        assert_eq!(result.status, TorCheckStatus::Tor);
+        assert!(result.is_tor);
+        assert_eq!(result.ip.as_deref(), Some("185.220.101.1"));
+    }
+
+    #[test]
+    fn config_load_save_roundtrips() {
+        let dir = unique_temp_dir();
+        let path = config_file_path_from_dir(&dir);
+        let config = FoxyTunnelConfig {
+            socks_port: 19_051,
+            log_connections: true,
+            bootstrap_timeout_seconds: 90,
+            ..FoxyTunnelConfig::default()
+        };
+
+        write_config_to_file(&path, &config).expect("config should save");
+        let loaded = FoxyTunnelConfig::load(&path).expect("config should load");
+
+        assert_eq!(loaded, config);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn invalid_timeout_is_rejected() {
+        let mut config = FoxyTunnelConfig::default();
+        let result = apply_start_options(
+            &mut config,
+            StartOptions {
+                socks_port: 19_050,
+                log_connections: false,
+                bootstrap_timeout_seconds: 5,
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(config.bootstrap_timeout_seconds, 120);
+    }
+
+    fn unique_temp_dir() -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+
+        std::env::temp_dir().join(Path::new(&format!(
+            "foxytunnel-desktop-test-{}-{stamp}",
+            std::process::id()
+        )))
     }
 }

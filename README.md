@@ -60,8 +60,10 @@ npm install
 npm run tauri dev
 ```
 
-The first GUI screen can start and stop the local SOCKS proxy, set the SOCKS
-port, change the bootstrap timeout, and enable connection logging.
+The tray GUI can start and stop the local SOCKS proxy, copy the active endpoint,
+test whether the proxy reaches Tor Check through Tor, set the SOCKS port, change
+the bootstrap timeout, and enable connection logging. Desktop settings are saved
+to the app config directory and restored on the next launch.
 
 Example `foxytunnel.toml`:
 
