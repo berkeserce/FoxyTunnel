@@ -11,6 +11,9 @@
   --primary-strong: #ff8a1f;
   --primary-soft: #3a1f0e;
   --amber: #ffbd66;
+  --success: #22c55e;
+  --success-soft: #0f2a18;
+  --success-border: #237a42;
   --danger: #ff5d42;
   --danger-soft: #39150f;
   color: var(--text);
@@ -137,17 +140,32 @@ h1 {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-raised);
-  padding: 6px 10px;
+  padding: 6px 10px 6px 9px;
   color: var(--text);
   text-align: center;
   font-size: 0.82rem;
   font-weight: 850;
 }
 
+.status-pill::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 999px;
+  background: var(--muted);
+  content: "";
+  vertical-align: 1px;
+}
+
 .status-pill[data-status="running"] {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-  color: var(--amber);
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: #a7f3c3;
+}
+
+.status-pill[data-status="running"]::before {
+  background: var(--success);
 }
 
 .status-pill[data-status="bootstrapping"] {
@@ -156,10 +174,22 @@ h1 {
   color: var(--amber);
 }
 
+.status-pill[data-status="bootstrapping"]::before {
+  background: var(--amber);
+}
+
 .status-pill[data-status="error"] {
   border-color: var(--danger);
   background: var(--danger-soft);
   color: #ffb5a8;
+}
+
+.status-pill[data-status="error"]::before {
+  background: var(--danger);
+}
+
+.status-pill[data-status="stopped"]::before {
+  background: #8f8175;
 }
 
 .icon-button {
@@ -224,33 +254,6 @@ h1 {
   color: var(--text);
 }
 
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: 12px 0 0;
-}
-
-.summary-grid div {
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #100c09;
-  padding: 9px 10px;
-}
-
-dt,
-dd {
-  margin: 0;
-}
-
-dd {
-  margin-top: 3px;
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-weight: 850;
-}
-
 .connection-actions {
   display: flex;
   min-width: 0;
@@ -270,7 +273,7 @@ dd {
 }
 
 .connection-note[data-status="tor"] {
-  color: var(--amber);
+  color: #86efac;
 }
 
 .connection-note[data-status="not_tor"],

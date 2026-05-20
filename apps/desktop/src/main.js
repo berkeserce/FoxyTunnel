@@ -4,8 +4,6 @@ import "./styles.css";
 
 const statusPill = document.querySelector("#status-pill");
 const endpointText = document.querySelector("#endpoint-text");
-const portText = document.querySelector("#port-text");
-const timeoutText = document.querySelector("#timeout-text");
 const messageLog = document.querySelector("#message-log");
 const actionButton = document.querySelector("#action-button");
 const copyEndpointButton = document.querySelector("#copy-endpoint-button");
@@ -78,8 +76,6 @@ function renderStatus(status, { syncSettings = false } = {}) {
   statusPill.textContent = status.status;
   statusPill.dataset.status = status.status.toLowerCase();
   endpointText.textContent = status.endpoint;
-  portText.textContent = status.socks_port;
-  timeoutText.textContent = `${status.bootstrap_timeout_seconds}s`;
 
   if (syncSettings) {
     portInput.value = status.socks_port;
@@ -227,7 +223,8 @@ async function testTorConnection() {
 
   try {
     const result = await invoke("test_tor_connection");
-    torTestText.textContent = result.ip ? result.ip : result.message;
+    torTestText.textContent =
+      result.status === "tor" && result.ip ? `IP: ${result.ip}` : result.message;
     torTestText.title = result.message;
     torTestText.dataset.status = result.status;
   } finally {
