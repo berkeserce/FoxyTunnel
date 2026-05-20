@@ -1,6 +1,17 @@
 import { Button } from "@heroui/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2, Copy, Loader2, Play, ShieldCheck, ShieldX, Square, WifiOff } from "lucide-react";
+import {
+  CheckCircle2,
+  Copy,
+  Download,
+  Loader2,
+  Play,
+  ShieldCheck,
+  ShieldX,
+  Square,
+  Upload,
+  WifiOff,
+} from "lucide-react";
 import { LiveLog } from "./LiveLog";
 import { cardVariants, quickTransition, springTransition, viewVariants } from "../motionPresets";
 import { statusMeta } from "../statusMeta";
@@ -14,6 +25,8 @@ type MainViewProps = {
   routeStatus: string;
   routeIpText: string;
   routeDetailText: string;
+  routeDownloadMbps: number | null;
+  routeUploadMbps: number | null;
   logs: LogLine[];
   isVisible: boolean;
   onPrimaryAction: () => void;
@@ -100,6 +113,18 @@ function torResultMeta(status: string, text: string, detail: string, inFlight: b
   };
 }
 
+function formatMbps(value: number | null) {
+  if (value === null) {
+    return "--";
+  }
+
+  if (value >= 10) {
+    return value.toFixed(1);
+  }
+
+  return value.toFixed(2);
+}
+
 export function MainView({
   endpoint,
   status,
@@ -108,6 +133,8 @@ export function MainView({
   routeStatus,
   routeIpText,
   routeDetailText,
+  routeDownloadMbps,
+  routeUploadMbps,
   logs,
   isVisible,
   onPrimaryAction,
@@ -181,7 +208,17 @@ export function MainView({
                   <span className="flex-none uppercase opacity-70">{torResult.label}</span>
                   <span className="truncate">{torResult.text}</span>
                 </span>
-                <span className="ml-[22px] truncate text-[0.66rem] font-bold opacity-70">{torResult.detail}</span>
+                <span className="ml-[22px] flex min-w-0 items-center gap-2 truncate text-[0.66rem] font-bold opacity-70">
+                  <span className="truncate">{torResult.detail}</span>
+                  <span className="inline-flex flex-none items-center gap-0.5">
+                    <Download size={10} />
+                    {formatMbps(routeDownloadMbps)}
+                  </span>
+                  <span className="inline-flex flex-none items-center gap-0.5">
+                    <Upload size={10} />
+                    {formatMbps(routeUploadMbps)}
+                  </span>
+                </span>
               </motion.span>
               <Button
                 className="ghost-button h-8 flex-none px-3"
