@@ -11,8 +11,9 @@ type MainViewProps = {
   status: ProxyStatus;
   actionInFlight: boolean;
   torTestInFlight: boolean;
-  torTestStatus: string;
-  torTestText: string;
+  routeStatus: string;
+  routeIpText: string;
+  routeDetailText: string;
   logs: LogLine[];
   isVisible: boolean;
   onPrimaryAction: () => void;
@@ -54,11 +55,12 @@ function torIcon(status: string, inFlight: boolean) {
   return <CheckCircle2 size={15} />;
 }
 
-function torResultMeta(status: string, text: string, inFlight: boolean) {
+function torResultMeta(status: string, text: string, detail: string, inFlight: boolean) {
   if (inFlight) {
     return {
       className: "border-amber-700/70 bg-amber-950/35 text-amber-100",
       label: "Checking",
+      detail: "Speed test running",
       text: "Checking...",
     };
   }
@@ -67,6 +69,7 @@ function torResultMeta(status: string, text: string, inFlight: boolean) {
     return {
       className: "text-emerald-300",
       label: "Verified",
+      detail,
       text,
     };
   }
@@ -74,7 +77,8 @@ function torResultMeta(status: string, text: string, inFlight: boolean) {
   if (status === "not_tor") {
     return {
       className: "text-red-300",
-      label: "Not Tor",
+      label: text.startsWith("Default IP") ? "Default" : "Not Tor",
+      detail,
       text,
     };
   }
@@ -83,14 +87,16 @@ function torResultMeta(status: string, text: string, inFlight: boolean) {
     return {
       className: "text-orange-300",
       label: "Unavailable",
+      detail,
       text,
     };
   }
 
   return {
     className: "text-[#b8a494]",
-    label: "Tor check",
-    text: "Not tested",
+    label: "Default",
+    detail,
+    text,
   };
 }
 
@@ -99,8 +105,9 @@ export function MainView({
   status,
   actionInFlight,
   torTestInFlight,
-  torTestStatus,
-  torTestText,
+  routeStatus,
+  routeIpText,
+  routeDetailText,
   logs,
   isVisible,
   onPrimaryAction,
@@ -115,7 +122,7 @@ export function MainView({
   const isBootstrapping = status === "Bootstrapping";
   const canStart = status === "Stopped" || status === "Error";
   const canUsePrimary = !actionInFlight && !isBootstrapping && (isRunning || canStart);
-  const torResult = torResultMeta(torTestStatus, torTestText, torTestInFlight);
+  const torResult = torResultMeta(routeStatus, routeIpText, routeDetailText, torTestInFlight);
 
   return (
     <AnimatePresence mode="wait">
@@ -164,14 +171,17 @@ export function MainView({
             <div className="relative mt-2 flex min-w-0 items-center justify-between gap-2 border-t border-[#3b2819]/70 pt-2">
               <motion.span
                 animate={{ opacity: 1, y: 0 }}
-                className={`flex min-w-0 items-center gap-1.5 text-[0.72rem] font-extrabold ${torResult.className}`}
+                className={`grid min-w-0 gap-0.5 text-[0.72rem] font-extrabold leading-tight ${torResult.className}`}
                 initial={{ opacity: 0, y: 3 }}
-                key={`${torTestStatus}-${torTestText}-${torTestInFlight}`}
+                key={`${routeStatus}-${routeIpText}-${routeDetailText}-${torTestInFlight}`}
                 title={torResult.text}
               >
-                <span className="flex-none opacity-90">{torIcon(torTestStatus, torTestInFlight)}</span>
-                <span className="flex-none uppercase opacity-70">{torResult.label}</span>
-                <span className="truncate">{torResult.text}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="flex-none opacity-90">{torIcon(routeStatus, torTestInFlight)}</span>
+                  <span className="flex-none uppercase opacity-70">{torResult.label}</span>
+                  <span className="truncate">{torResult.text}</span>
+                </span>
+                <span className="ml-[22px] truncate text-[0.66rem] font-bold opacity-70">{torResult.detail}</span>
               </motion.span>
               <Button
                 className="ghost-button h-8 flex-none px-3"

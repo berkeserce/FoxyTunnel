@@ -15,7 +15,7 @@ export function AppHeader({ status, view, onOpenSettings, onClose }: AppHeaderPr
   const StatusIcon = meta.icon;
 
   return (
-    <header className="relative z-10 flex flex-none items-start justify-between gap-3">
+    <header className="relative z-10 flex flex-none items-center justify-between gap-3">
       <div className="flex min-w-0 items-center">
         <div className="min-w-0">
           <p className="m-0 text-[0.72rem] font-black uppercase leading-tight text-amber-300">
@@ -29,7 +29,7 @@ export function AppHeader({ status, view, onOpenSettings, onClose }: AppHeaderPr
 
       <div className="flex flex-none items-center gap-2">
         <Chip
-          className={`h-8 min-w-[76px] border px-2.5 text-[0.78rem] font-extrabold shadow-lg ${meta.chipClass}`}
+          className={`h-8 w-[88px] justify-center border px-2.5 text-[0.78rem] font-extrabold shadow-lg ${meta.chipClass}`}
           variant="soft"
         >
           <StatusIcon className={status === "Bootstrapping" ? "animate-spin" : ""} size={13} />

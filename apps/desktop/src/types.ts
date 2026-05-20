@@ -35,6 +35,7 @@ export type TorCheckDto = {
   status: "tor" | "not_tor" | "unavailable";
   is_tor: boolean;
   ip?: string | null;
+  latency_ms?: number | null;
   message: string;
 };
 

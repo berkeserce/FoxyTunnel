@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -82,6 +82,7 @@ struct TorCheckDto {
     status: TorCheckStatus,
     is_tor: bool,
     ip: Option<String>,
+    latency_ms: Option<u64>,
     message: String,
 }
 
@@ -139,6 +140,14 @@ fn hide_panel_window(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+async fn get_default_ip() -> Result<TorCheckDto, String> {
+    Ok(match check_default_ip().await {
+        Ok(result) => result,
+        Err(error) => TorCheckDto::unavailable(format!("Default IP unavailable: {error}")),
+    })
 }
 
 #[tauri::command]
@@ -385,6 +394,7 @@ async fn check_tor_via_socks(endpoint: &str) -> Result<TorCheckDto, String> {
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|error| format!("failed to create Tor check client: {error}"))?;
+    let start = Instant::now();
     let response = client
         .get("https://check.torproject.org/api/ip")
         .send()
@@ -396,10 +406,36 @@ async fn check_tor_via_socks(endpoint: &str) -> Result<TorCheckDto, String> {
         .await
         .map_err(|error| format!("failed to read Tor Check response: {error}"))?;
 
-    Ok(tor_check_from_response(response))
+    Ok(tor_check_from_response(
+        response,
+        Some(duration_millis(start.elapsed())),
+    ))
 }
 
-fn tor_check_from_response(response: TorCheckResponse) -> TorCheckDto {
+async fn check_default_ip() -> Result<TorCheckDto, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|error| format!("failed to create default IP client: {error}"))?;
+    let start = Instant::now();
+    let response = client
+        .get("https://check.torproject.org/api/ip")
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Tor Check returned an error: {error}"))?
+        .json::<TorCheckResponse>()
+        .await
+        .map_err(|error| format!("failed to read default IP response: {error}"))?;
+
+    Ok(default_ip_from_response(
+        response,
+        Some(duration_millis(start.elapsed())),
+    ))
+}
+
+fn tor_check_from_response(response: TorCheckResponse, latency_ms: Option<u64>) -> TorCheckDto {
     if response.is_tor {
         let suffix = response
             .ip
@@ -409,6 +445,7 @@ fn tor_check_from_response(response: TorCheckResponse) -> TorCheckDto {
             status: TorCheckStatus::Tor,
             is_tor: true,
             ip: response.ip,
+            latency_ms,
             message: format!("Tor connection verified.{suffix}"),
         }
     } else {
@@ -416,9 +453,33 @@ fn tor_check_from_response(response: TorCheckResponse) -> TorCheckDto {
             status: TorCheckStatus::NotTor,
             is_tor: false,
             ip: response.ip,
+            latency_ms,
             message: "Connection reached Tor Check but was not identified as Tor.".to_string(),
         }
     }
+}
+
+fn default_ip_from_response(response: TorCheckResponse, latency_ms: Option<u64>) -> TorCheckDto {
+    let message = response.ip.as_deref().map_or_else(
+        || "Default IP detected.".to_string(),
+        |ip| format!("Default IP: {ip}"),
+    );
+
+    TorCheckDto {
+        status: if response.is_tor {
+            TorCheckStatus::Tor
+        } else {
+            TorCheckStatus::NotTor
+        },
+        is_tor: response.is_tor,
+        ip: response.ip,
+        latency_ms,
+        message,
+    }
+}
+
+fn duration_millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 impl TorCheckDto {
@@ -427,6 +488,7 @@ impl TorCheckDto {
             status: TorCheckStatus::Unavailable,
             is_tor: false,
             ip: None,
+            latency_ms: None,
             message: message.into(),
         }
     }
@@ -621,6 +683,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             clear_activity_logs,
+            get_default_ip,
             get_activity_logs,
             get_status,
             hide_panel_window,
@@ -859,11 +922,12 @@ mod tests {
         let response: TorCheckResponse =
             serde_json::from_str(r#"{"IsTor":true,"IP":"185.220.101.1"}"#)
                 .expect("Tor Check JSON should parse");
-        let result = tor_check_from_response(response);
+        let result = tor_check_from_response(response, Some(123));
 
         assert_eq!(result.status, TorCheckStatus::Tor);
         assert!(result.is_tor);
         assert_eq!(result.ip.as_deref(), Some("185.220.101.1"));
+        assert_eq!(result.latency_ms, Some(123));
     }
 
     #[test]
