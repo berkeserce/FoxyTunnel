@@ -100,21 +100,109 @@ input {
   transform: none;
 }
 
-.fox-input input {
+.fox-input {
+  width: 100%;
+  height: 42px;
+  border: 1px solid #6a3b16;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(29, 21, 16, 0.82), rgba(15, 11, 8, 0.96)),
+    #0f0b08;
   color: #fff2e5;
+  font-weight: 850;
+  outline: none;
+  padding: 0 12px;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
 }
 
-.fox-input [data-slot="input-wrapper"],
-.fox-input input {
-  border-color: #6a3b16;
-  background: #0f0b08;
-}
-
-.fox-input [data-slot="input-wrapper"]:focus-within {
+.fox-input:focus {
   border-color: #f97316;
-  outline: 2px solid rgba(249, 115, 22, 0.22);
+  box-shadow:
+    0 0 0 2px rgba(249, 115, 22, 0.22),
+    0 12px 28px rgba(0, 0, 0, 0.24);
 }
 
-.fox-input input:disabled {
+.fox-input:hover:not(:disabled) {
+  border-color: #9a541c;
+}
+
+.fox-input:disabled {
+  cursor: not-allowed;
+  border-color: #3b2819;
+  background: #100c09;
   color: #8d7d70;
+}
+
+.foxy-switch {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #3b2819;
+  border-radius: 8px;
+  background: #100c09;
+  padding: 10px 11px;
+  text-align: left;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.foxy-switch:hover:not(:disabled) {
+  border-color: #f97316;
+  background: #18100b;
+  transform: translateY(-1px);
+}
+
+.foxy-switch:focus-visible {
+  border-color: #f97316;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.22);
+  outline: none;
+}
+
+.foxy-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.foxy-switch-track {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex: 0 0 42px;
+  border: 1px solid #6a3b16;
+  border-radius: 999px;
+  background: #1d1510;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.foxy-switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #b8a494;
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.foxy-switch[aria-checked="true"] .foxy-switch-track {
+  border-color: #f97316;
+  background: #3a1f0e;
+}
+
+.foxy-switch[aria-checked="true"] .foxy-switch-thumb {
+  background: #ffbd66;
+  transform: translateX(18px);
+  box-shadow: 0 0 14px rgba(251, 146, 60, 0.65);
 }

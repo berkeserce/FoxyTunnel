@@ -1,4 +1,4 @@
-import { Button, Input, Switch, Tooltip } from "@heroui/react";
+import { Button, Tooltip } from "@heroui/react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, Info, LockKeyhole, SlidersHorizontal } from "lucide-react";
 import { cardVariants, quickTransition, springTransition, viewVariants } from "../motionPresets";
@@ -79,15 +79,13 @@ export function SettingsView({
 
             <div className="relative grid gap-1.5">
               <LabelWithInfo text="Port" tooltip="Local SOCKS port. Configure your browser to use this port." />
-              <Input
+              <input
                 className="fox-input"
                 disabled={isDisabled}
-                fullWidth
                 max={65535}
                 min={1}
                 type="number"
                 value={String(settings.socks_port)}
-                variant="secondary"
                 onChange={(event) =>
                   onSettingsChange({
                     ...settings,
@@ -102,15 +100,13 @@ export function SettingsView({
                 text="Bootstrap"
                 tooltip="Maximum time FoxyTunnel waits while connecting to the Tor network."
               />
-              <Input
+              <input
                 className="fox-input"
                 disabled={isDisabled}
-                fullWidth
                 max={600}
                 min={10}
                 type="number"
                 value={String(settings.bootstrap_timeout_seconds)}
-                variant="secondary"
                 onChange={(event) =>
                   onSettingsChange({
                     ...settings,
@@ -120,19 +116,29 @@ export function SettingsView({
               />
             </div>
 
-            <Switch
-              className="relative text-sm font-extrabold text-[#fff2e5]"
-              isDisabled={isDisabled}
-              isSelected={settings.log_connections}
-              onChange={(isSelected) =>
+            <button
+              aria-checked={settings.log_connections}
+              className="foxy-switch"
+              disabled={isDisabled}
+              role="switch"
+              type="button"
+              onClick={() =>
                 onSettingsChange({
                   ...settings,
-                  log_connections: isSelected,
+                  log_connections: !settings.log_connections,
                 })
               }
             >
-              Log connections
-            </Switch>
+              <span className="min-w-0">
+                <span className="block text-sm font-extrabold text-[#fff2e5]">Log connections</span>
+                <span className="block text-[0.72rem] font-bold text-[#b8a494]">
+                  Show SOCKS CONNECT targets in the live log
+                </span>
+              </span>
+              <span className="foxy-switch-track" aria-hidden="true">
+                <span className="foxy-switch-thumb" />
+              </span>
+            </button>
           </motion.section>
         </motion.section>
       ) : null}

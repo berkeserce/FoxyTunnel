@@ -54,6 +54,46 @@ function torIcon(status: string, inFlight: boolean) {
   return <CheckCircle2 size={15} />;
 }
 
+function torResultMeta(status: string, text: string, inFlight: boolean) {
+  if (inFlight) {
+    return {
+      className: "border-amber-700/70 bg-amber-950/35 text-amber-100",
+      label: "Checking",
+      text: "Checking...",
+    };
+  }
+
+  if (status === "tor") {
+    return {
+      className: "text-emerald-300",
+      label: "Verified",
+      text,
+    };
+  }
+
+  if (status === "not_tor") {
+    return {
+      className: "text-red-300",
+      label: "Not Tor",
+      text,
+    };
+  }
+
+  if (status === "unavailable") {
+    return {
+      className: "text-orange-300",
+      label: "Unavailable",
+      text,
+    };
+  }
+
+  return {
+    className: "text-[#b8a494]",
+    label: "Tor check",
+    text: "Not tested",
+  };
+}
+
 export function MainView({
   endpoint,
   status,
@@ -75,12 +115,7 @@ export function MainView({
   const isBootstrapping = status === "Bootstrapping";
   const canStart = status === "Stopped" || status === "Error";
   const canUsePrimary = !actionInFlight && !isBootstrapping && (isRunning || canStart);
-  const torResultClass =
-    torTestStatus === "tor"
-      ? "border-emerald-700/70 bg-emerald-950/35 text-emerald-200"
-      : torTestStatus === "not_tor" || torTestStatus === "unavailable"
-        ? "border-red-700/70 bg-red-950/35 text-red-200"
-        : "border-[#3b2819] bg-[#100c09] text-[#b8a494]";
+  const torResult = torResultMeta(torTestStatus, torTestText, torTestInFlight);
 
   return (
     <AnimatePresence mode="wait">
@@ -107,18 +142,18 @@ export function MainView({
               transition={{ duration: 2.2, repeat: isRunning ? Infinity : 0 }}
             />
             <div className="relative flex items-start gap-3">
-              <div className="grid size-11 flex-none place-items-center rounded-lg border border-orange-900/70 bg-[#100c09] text-amber-300">
-                <StatusIcon className={isBootstrapping ? "animate-spin" : ""} size={21} />
+              <div className="grid size-9 flex-none place-items-center rounded-lg border border-orange-900/70 bg-[#100c09] text-amber-300">
+                <StatusIcon className={isBootstrapping ? "animate-spin" : ""} size={18} />
               </div>
               <div className="min-w-0 flex-1">
-                <span className="text-[0.72rem] font-black uppercase tracking-wide text-[#b8a494]">
+                <span className="text-[0.68rem] font-black uppercase tracking-wide text-[#b8a494]">
                   Connection health
                 </span>
-                <div className="mt-1 flex items-center gap-2">
-                  <strong className="text-lg font-black text-[#fff2e5]">{meta.health}</strong>
+                <div className="mt-0.5 flex items-center gap-2">
+                  <strong className="text-base font-black text-[#fff2e5]">{meta.health}</strong>
                   {isRunning ? <span className="size-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.9)]" /> : null}
                 </div>
-                <p className="mt-1 truncate text-[0.78rem] font-bold text-[#b8a494]">{endpoint}</p>
+                <p className="mt-1 break-all text-[0.78rem] font-bold text-[#b8a494]">{endpoint}</p>
               </div>
               <Button className="ghost-button" size="sm" variant="outline" onPress={onCopyEndpoint}>
                 <Copy size={14} />
@@ -126,27 +161,28 @@ export function MainView({
               </Button>
             </div>
 
-            <div className="relative mt-3 flex min-w-0 items-center gap-2">
+            <div className="relative mt-2 flex min-w-0 items-center justify-between gap-2 border-t border-[#3b2819]/70 pt-2">
+              <motion.span
+                animate={{ opacity: 1, y: 0 }}
+                className={`flex min-w-0 items-center gap-1.5 text-[0.72rem] font-extrabold ${torResult.className}`}
+                initial={{ opacity: 0, y: 3 }}
+                key={`${torTestStatus}-${torTestText}-${torTestInFlight}`}
+                title={torResult.text}
+              >
+                <span className="flex-none opacity-90">{torIcon(torTestStatus, torTestInFlight)}</span>
+                <span className="flex-none uppercase opacity-70">{torResult.label}</span>
+                <span className="truncate">{torResult.text}</span>
+              </motion.span>
               <Button
-                className="ghost-button"
+                className="ghost-button h-8 flex-none px-3"
                 isDisabled={torTestInFlight || !isRunning}
                 size="sm"
                 variant="outline"
                 onPress={onTestTor}
               >
                 {torTestInFlight ? <Loader2 className="animate-spin" size={14} /> : <ShieldCheck size={14} />}
-                {torTestInFlight ? "Testing..." : "Test Tor"}
+                Test Tor
               </Button>
-              <motion.span
-                animate={{ opacity: 1, y: 0 }}
-                className={`flex min-w-0 items-center gap-1.5 truncate rounded-md border px-2 py-1 text-[0.76rem] font-extrabold ${torResultClass}`}
-                initial={{ opacity: 0, y: 4 }}
-                key={`${torTestStatus}-${torTestText}`}
-                title={torTestText}
-              >
-                <span className="flex-none">{torIcon(torTestStatus, torTestInFlight)}</span>
-                <span className="truncate">{torTestText}</span>
-              </motion.span>
             </div>
           </motion.section>
 
@@ -161,7 +197,7 @@ export function MainView({
               {(actionInFlight || isBootstrapping) && !isRunning ? (
                 <Loader2 className="animate-spin" size={16} />
               ) : isRunning ? (
-                <Square size={16} />
+                <Square className="fill-red-500 text-red-500" size={16} />
               ) : (
                 <Play size={16} />
               )}
