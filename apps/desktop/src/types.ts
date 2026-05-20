@@ -15,6 +15,12 @@ export type LogDto = {
   message: string;
 };
 
+export type LogLine = {
+  id: number;
+  level: "info" | "error" | string;
+  text: string;
+};
+
 export type LogsDto = {
   entries: LogDto[];
 };

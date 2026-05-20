@@ -1,21 +1,9 @@
 import { Button, Chip } from "@heroui/react";
+import { motion } from "framer-motion";
 import { Settings, X } from "lucide-react";
 import logoUrl from "../../src-tauri/icons/fav1.png";
+import { statusMeta } from "../statusMeta";
 import type { ProxyStatus, ViewMode } from "../types";
-
-const STATUS_LABELS: Record<ProxyStatus, string> = {
-  Bootstrapping: "Starting",
-  Error: "Error",
-  Running: "Running",
-  Stopped: "Idle",
-};
-
-const STATUS_CLASSES: Record<ProxyStatus, string> = {
-  Bootstrapping: "border-amber-600/70 bg-amber-950/70 text-amber-200",
-  Error: "border-red-500/80 bg-red-950/70 text-red-200",
-  Running: "border-emerald-600/70 bg-emerald-950/70 text-emerald-200",
-  Stopped: "border-zinc-700 bg-[#1d1510] text-[#fff2e5]",
-};
 
 type AppHeaderProps = {
   status: ProxyStatus;
@@ -25,12 +13,19 @@ type AppHeaderProps = {
 };
 
 export function AppHeader({ status, view, onOpenSettings, onClose }: AppHeaderProps) {
+  const meta = statusMeta[status];
+  const StatusIcon = meta.icon;
+
   return (
-    <header className="flex flex-none items-start justify-between gap-3">
+    <header className="relative z-10 flex flex-none items-start justify-between gap-3">
       <div className="flex min-w-0 items-center gap-3">
-        <span className="grid size-10 flex-none place-items-center overflow-hidden rounded-lg border border-orange-800/80 bg-white">
+        <motion.span
+          animate={{ rotate: status === "Running" ? [0, -2, 2, 0] : 0 }}
+          className="grid size-10 flex-none place-items-center overflow-hidden rounded-lg border border-orange-800/80 bg-white shadow-[0_0_22px_rgba(249,115,22,0.18)]"
+          transition={{ duration: 3.6, repeat: status === "Running" ? Infinity : 0 }}
+        >
           <img className="size-full object-cover scale-150" src={logoUrl} alt="" />
-        </span>
+        </motion.span>
         <div className="min-w-0">
           <p className="m-0 text-[0.72rem] font-black uppercase leading-tight text-amber-300">
             FoxyTunnel
@@ -42,13 +37,18 @@ export function AppHeader({ status, view, onOpenSettings, onClose }: AppHeaderPr
       </div>
 
       <div className="flex flex-none items-center gap-2">
-        <Chip
-          className={`h-8 border px-2.5 text-[0.78rem] font-extrabold ${STATUS_CLASSES[status]}`}
-          variant="soft"
+        <motion.div
+          animate={status === "Running" ? { scale: [1, 1.04, 1] } : { scale: 1 }}
+          transition={{ duration: 1.8, repeat: status === "Running" ? Infinity : 0 }}
         >
-          <span className="mr-1.5 inline-block size-1.5 rounded-full bg-current align-[1px]" />
-          {STATUS_LABELS[status]}
-        </Chip>
+          <Chip
+            className={`h-8 border px-2.5 text-[0.78rem] font-extrabold shadow-lg ${meta.chipClass}`}
+            variant="soft"
+          >
+            <StatusIcon className={status === "Bootstrapping" ? "animate-spin" : ""} size={13} />
+            {meta.label}
+          </Chip>
+        </motion.div>
         {view === "main" ? (
           <Button
             aria-label="Settings"

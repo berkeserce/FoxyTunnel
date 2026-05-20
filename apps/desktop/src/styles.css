@@ -36,6 +36,12 @@ body {
 }
 
 button,
+a,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
 input {
   font: inherit;
 }
@@ -55,12 +61,18 @@ input {
   border-color: #6a3b16;
   background: #1d1510;
   color: #ffbd66;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
 }
 
 .icon-button:hover {
   border-color: #f97316;
   background: #3a1f0e;
   color: #fff2e5;
+  transform: translateY(-1px);
 }
 
 .ghost-button {
@@ -69,12 +81,23 @@ input {
   color: #ffbd66;
   font-size: 0.82rem;
   font-weight: 850;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
 }
 
 .ghost-button:hover {
   border-color: #f97316;
   background: #3a1f0e;
   color: #fff2e5;
+  transform: translateY(-1px);
+}
+
+.ghost-button[data-disabled="true"],
+.icon-button[data-disabled="true"] {
+  transform: none;
 }
 
 .fox-input input {
@@ -90,4 +113,8 @@ input {
 .fox-input [data-slot="input-wrapper"]:focus-within {
   border-color: #f97316;
   outline: 2px solid rgba(249, 115, 22, 0.22);
+}
+
+.fox-input input:disabled {
+  color: #8d7d70;
 }

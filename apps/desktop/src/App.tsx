@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { MainView } from "./components/MainView";
 import { SettingsView } from "./components/SettingsView";
-import type { LogDto, LogsDto, StartOptions, StatusDto, TorCheckDto, ViewMode } from "./types";
+import type { LogDto, LogLine, LogsDto, StartOptions, StatusDto, TorCheckDto, ViewMode } from "./types";
 
 const MAX_VISIBLE_LOG_LINES = 120;
 const LOG_POLL_INTERVAL_MS = 1500;
@@ -42,12 +42,13 @@ export default function App() {
   const [status, setStatus] = useState<StatusDto>(DEFAULT_STATUS);
   const [settings, setSettings] = useState<StartOptions>(optionsFromStatus(DEFAULT_STATUS));
   const [view, setView] = useState<ViewMode>("main");
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<LogLine[]>([]);
   const [actionInFlight, setActionInFlight] = useState(false);
   const [torTestInFlight, setTorTestInFlight] = useState(false);
   const [torTestText, setTorTestText] = useState("Not tested");
   const [torTestStatus, setTorTestStatus] = useState("");
   const lastLogSequence = useRef(0);
+  const localLogSequence = useRef(0);
   const settingsSaveTimer = useRef<number | undefined>(undefined);
   const statusRef = useRef(status);
   const actionInFlightRef = useRef(actionInFlight);
@@ -61,7 +62,19 @@ export default function App() {
   }, [actionInFlight]);
 
   const writeLog = useCallback((message: string, level = "info") => {
-    setLogs((current) => [...current, formatLogLine(message, level)].slice(-MAX_VISIBLE_LOG_LINES));
+    localLogSequence.current += 1;
+    const id = Number(`${Date.now()}${localLogSequence.current}`.slice(-12));
+
+    setLogs((current) =>
+      [
+        ...current,
+        {
+          id,
+          level,
+          text: formatLogLine(message, level),
+        },
+      ].slice(-MAX_VISIBLE_LOG_LINES),
+    );
   }, []);
 
   const appendBackendLog = useCallback(
@@ -71,9 +84,18 @@ export default function App() {
       }
 
       lastLogSequence.current = entry.sequence;
-      writeLog(entry.message, entry.level);
+      setLogs((current) =>
+        [
+          ...current,
+          {
+            id: entry.sequence,
+            level: entry.level,
+            text: formatLogLine(entry.message, entry.level),
+          },
+        ].slice(-MAX_VISIBLE_LOG_LINES),
+      );
     },
-    [writeLog],
+    [],
   );
 
   const renderStatus = useCallback((nextStatus: StatusDto, syncSettings = false) => {
@@ -291,7 +313,9 @@ export default function App() {
   const settingsDisabled = !isEditableStatus(status.status) || actionInFlight;
 
   return (
-    <main className="flex h-screen w-full flex-col gap-3 overflow-y-auto rounded-lg border border-orange-800/80 bg-[#0c0907] p-3.5 text-[#fff2e5]">
+    <main className="relative flex h-screen w-full flex-col gap-3 overflow-hidden rounded-lg border border-orange-800/80 bg-[#0c0907] p-3.5 text-[#fff2e5]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(249,115,22,0.18),transparent_34%),radial-gradient(circle_at_80%_12%,rgba(34,197,94,0.09),transparent_28%)]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-orange-400/70 to-transparent" />
       <AppHeader
         status={status.status}
         view={view}
@@ -299,10 +323,11 @@ export default function App() {
         onOpenSettings={() => setView("settings")}
       />
 
-      {view === "main" ? (
+      <div className="relative min-h-0 flex-1">
         <MainView
           actionInFlight={actionInFlight}
           endpoint={status.endpoint}
+          isVisible={view === "main"}
           logs={logs}
           status={status.status}
           torTestInFlight={torTestInFlight}
@@ -320,14 +345,15 @@ export default function App() {
           }}
           onTestTor={testTorConnection}
         />
-      ) : (
         <SettingsView
           isDisabled={settingsDisabled}
+          isVisible={view === "settings"}
           settings={settings}
+          status={status.status}
           onBack={() => setView("main")}
           onSettingsChange={handleSettingsChange}
         />
-      )}
+      </div>
     </main>
   );
 }
