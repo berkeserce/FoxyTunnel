@@ -39,11 +39,31 @@
 
       <section class="settings-panel">
         <label class="field">
-          <span>Port</span>
+          <span class="field-label">
+            Port
+            <button
+              class="info-dot"
+              type="button"
+              aria-label="Port info"
+              data-tooltip="Local SOCKS port. Configure your browser to use this port."
+            >
+              i
+            </button>
+          </span>
           <input id="port-input" type="number" min="1" max="65535" value="19050" />
         </label>
         <label class="field">
-          <span>Bootstrap</span>
+          <span class="field-label">
+            Bootstrap
+            <button
+              class="info-dot"
+              type="button"
+              aria-label="Bootstrap timeout info"
+              data-tooltip="Maximum time FoxyTunnel waits while connecting to the Tor network."
+            >
+              i
+            </button>
+          </span>
           <input id="timeout-input" type="number" min="10" max="600" value="120" />
         </label>
         <label class="check-row">

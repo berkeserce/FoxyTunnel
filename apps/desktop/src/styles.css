@@ -60,6 +60,12 @@ button:hover:not(:disabled) {
   background: var(--primary-strong);
 }
 
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid rgba(249, 115, 22, 0.28);
+  outline-offset: 2px;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
@@ -315,6 +321,74 @@ h1 {
   gap: 6px;
 }
 
+.field-label {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.info-dot {
+  display: inline-grid;
+  position: relative;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  place-items: center;
+  border-color: var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  padding: 0;
+  color: var(--amber);
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: lowercase;
+}
+
+.info-dot:hover,
+.info-dot:focus-visible {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--text);
+}
+
+.info-dot::after {
+  position: absolute;
+  z-index: 5;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  width: 210px;
+  max-width: 70vw;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: #100b08;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+  color: var(--text);
+  content: attr(data-tooltip);
+  font-size: 0.74rem;
+  font-weight: 750;
+  line-height: 1.3;
+  opacity: 0;
+  padding: 8px 9px;
+  pointer-events: none;
+  text-align: left;
+  text-transform: none;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+  visibility: hidden;
+}
+
+.info-dot:hover::after,
+.info-dot:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+}
+
 .field input[type="number"] {
   width: 100%;
   height: 38px;
@@ -327,7 +401,6 @@ h1 {
 
 .field input[type="number"]:focus {
   border-color: var(--primary);
-  outline: 2px solid rgba(249, 115, 22, 0.22);
 }
 
 .check-row {

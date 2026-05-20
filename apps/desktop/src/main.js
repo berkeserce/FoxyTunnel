@@ -25,6 +25,13 @@ let currentStatus = "Stopped";
 let actionInFlight = false;
 let torTestInFlight = false;
 
+const STATUS_LABELS = {
+  Bootstrapping: "Starting",
+  Error: "Error",
+  Running: "Running",
+  Stopped: "Idle",
+};
+
 function writeLog(message, level = "info") {
   const time = new Date().toLocaleTimeString();
   const prefix = level === "error" ? "ERROR" : level.toUpperCase();
@@ -73,7 +80,7 @@ function renderTorTest(status) {
 
 function renderStatus(status, { syncSettings = false } = {}) {
   currentStatus = status.status;
-  statusPill.textContent = status.status;
+  statusPill.textContent = STATUS_LABELS[status.status] ?? status.status;
   statusPill.dataset.status = status.status.toLowerCase();
   endpointText.textContent = status.endpoint;
 
