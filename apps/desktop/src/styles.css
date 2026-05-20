@@ -86,6 +86,19 @@ button:disabled {
   scrollbar-color: var(--primary) var(--surface);
 }
 
+.view {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.view[hidden],
+.header-actions [hidden] {
+  display: none;
+}
+
 .app-header {
   display: flex;
   flex: 0 0 auto;
@@ -113,7 +126,7 @@ button:disabled {
 
 .eyebrow,
 .label,
-.field span,
+.field-heading > span:first-child,
 .check-row span,
 dt {
   color: var(--muted);
@@ -131,6 +144,13 @@ h1 {
   margin: 0;
   color: var(--text);
   font-size: 1.12rem;
+  letter-spacing: 0;
+}
+
+h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
   letter-spacing: 0;
 }
 
@@ -213,6 +233,13 @@ h1 {
   border-color: var(--primary);
   background: var(--primary-soft);
   color: var(--text);
+}
+
+.settings-titlebar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
 }
 
 .connection-panel,
@@ -309,9 +336,9 @@ h1 {
 .settings-panel {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
 }
 
 .field {
@@ -321,7 +348,7 @@ h1 {
   gap: 6px;
 }
 
-.field-label {
+.field-heading {
   display: inline-flex;
   width: fit-content;
   align-items: center;
@@ -347,8 +374,7 @@ h1 {
   text-transform: lowercase;
 }
 
-.info-dot:hover,
-.info-dot:focus-visible {
+.info-dot:hover {
   border-color: var(--primary);
   background: var(--primary-soft);
   color: var(--text);
@@ -358,9 +384,9 @@ h1 {
   position: absolute;
   z-index: 5;
   bottom: calc(100% + 8px);
-  left: 50%;
-  width: 210px;
-  max-width: 70vw;
+  left: 0;
+  width: 220px;
+  max-width: calc(100vw - 44px);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: #100b08;
@@ -375,17 +401,16 @@ h1 {
   pointer-events: none;
   text-align: left;
   text-transform: none;
-  transform: translate(-50%, 4px);
+  transform: translateY(4px);
   transition:
     opacity 120ms ease,
     transform 120ms ease;
   visibility: hidden;
 }
 
-.info-dot:hover::after,
-.info-dot:focus-visible::after {
+.info-dot:hover::after {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: translateY(0);
   visibility: visible;
 }
 

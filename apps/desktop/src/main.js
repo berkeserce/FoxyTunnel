@@ -11,6 +11,10 @@ const testTorButton = document.querySelector("#test-tor-button");
 const torTestText = document.querySelector("#tor-test-text");
 const refreshButton = document.querySelector("#refresh-button");
 const clearLogButton = document.querySelector("#clear-log-button");
+const mainView = document.querySelector("#main-view");
+const settingsView = document.querySelector("#settings-view");
+const settingsButton = document.querySelector("#settings-button");
+const backButton = document.querySelector("#back-button");
 const closeButton = document.querySelector("#close-button");
 const portInput = document.querySelector("#port-input");
 const timeoutInput = document.querySelector("#timeout-input");
@@ -24,6 +28,7 @@ let settingsSaveTimer = undefined;
 let currentStatus = "Stopped";
 let actionInFlight = false;
 let torTestInFlight = false;
+let currentView = "main";
 
 const STATUS_LABELS = {
   Bootstrapping: "Starting",
@@ -76,6 +81,15 @@ function renderAction(status) {
 function renderTorTest(status) {
   testTorButton.disabled = torTestInFlight || status !== "Running";
   testTorButton.textContent = torTestInFlight ? "Testing..." : "Test Tor";
+}
+
+function showView(view) {
+  currentView = view;
+  const isSettings = view === "settings";
+
+  mainView.hidden = isSettings;
+  settingsView.hidden = !isSettings;
+  settingsButton.hidden = isSettings;
 }
 
 function renderStatus(status, { syncSettings = false } = {}) {
@@ -282,6 +296,14 @@ clearLogButton.addEventListener("click", async () => {
   messageLog.textContent = "Ready.";
 });
 
+settingsButton.addEventListener("click", () => {
+  showView("settings");
+});
+
+backButton.addEventListener("click", () => {
+  showView("main");
+});
+
 closeButton.addEventListener("click", () => {
   invoke("hide_panel_window").catch((error) => writeLog(String(error), "error"));
 });
@@ -292,10 +314,16 @@ logInput.addEventListener("change", scheduleSettingsSave);
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    if (currentView === "settings") {
+      showView("main");
+      return;
+    }
+
     invoke("hide_panel_window").catch((error) => writeLog(String(error), "error"));
   }
 });
 
+showView("main");
 bindBackendLogs().catch((error) => writeLog(String(error), "error"));
 startLogPolling();
 refreshStatus({ syncSettings: true }).catch((error) => writeLog(String(error), "error"));
