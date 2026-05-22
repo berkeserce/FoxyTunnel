@@ -3,6 +3,7 @@
 use foxytunnel_core::{ConfigError, FoxyTunnelConfig, SocksServerEvent, TorService};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -825,6 +826,13 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 fn configure_panel_window(window: &WebviewWindow) -> tauri::Result<()> {
+    if uses_wayland_window_management() {
+        window.set_resizable(false)?;
+        window.hide()?;
+
+        return Ok(());
+    }
+
     window.set_decorations(false)?;
     window.set_resizable(false)?;
     window.set_always_on_top(true)?;
@@ -863,9 +871,22 @@ fn hide_panel(app: &tauri::AppHandle) {
 }
 
 fn show_window(window: &WebviewWindow, anchor: Option<TrayAnchor>) {
+    if uses_wayland_window_management() {
+        let _ = window.show();
+        let _ = window.set_focus();
+
+        return;
+    }
+
     let _ = position_panel_window(window, anchor);
     let _ = window.show();
+    let _ = position_panel_window(window, anchor);
     let _ = window.set_focus();
+}
+
+fn uses_wayland_window_management() -> bool {
+    env::var("XDG_SESSION_TYPE").is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
+        || env::var("WAYLAND_DISPLAY").is_ok()
 }
 
 fn position_panel_window(window: &WebviewWindow, anchor: Option<TrayAnchor>) -> tauri::Result<()> {
@@ -892,16 +913,58 @@ fn position_panel_window(window: &WebviewWindow, anchor: Option<TrayAnchor>) -> 
     let work_top = work_area.position.y;
     let work_right = work_left.saturating_add(work_area_width);
     let work_bottom = work_top.saturating_add(work_area_height);
-    let preferred_x = work_right
-        .saturating_sub(window_width)
-        .saturating_sub(PANEL_MARGIN);
-    let preferred_y = work_bottom
-        .saturating_sub(window_height)
-        .saturating_sub(PANEL_MARGIN);
+    let preferred_position = preferred_panel_position(
+        anchor,
+        work_top,
+        work_right,
+        work_bottom,
+        window_width,
+        window_height,
+    );
+    let preferred_x = preferred_position.x;
+    let preferred_y = preferred_position.y;
     let x = clamp_panel_axis(preferred_x, work_left, work_right, window_width);
     let y = clamp_panel_axis(preferred_y, work_top, work_bottom, window_height);
 
     window.set_position(PhysicalPosition::new(x, y))
+}
+
+fn preferred_panel_position(
+    anchor: Option<TrayAnchor>,
+    work_top: i32,
+    work_right: i32,
+    work_bottom: i32,
+    window_width: i32,
+    window_height: i32,
+) -> PhysicalPosition<i32> {
+    let fallback_x = work_right
+        .saturating_sub(window_width)
+        .saturating_sub(PANEL_MARGIN);
+    let fallback_y = work_bottom
+        .saturating_sub(window_height)
+        .saturating_sub(PANEL_MARGIN);
+
+    let Some(anchor) = anchor else {
+        return PhysicalPosition::new(fallback_x, fallback_y);
+    };
+
+    let anchor_center_x = anchor.center_x_i32();
+    let anchor_center_y = anchor.center_y_i32();
+    let work_center_y = work_top.saturating_add((work_bottom.saturating_sub(work_top)) / 2);
+    let x = anchor_center_x.saturating_sub(window_width / 2);
+    let y = if anchor_center_y <= work_center_y {
+        anchor
+            .y
+            .saturating_add(anchor.height)
+            .saturating_add(PANEL_MARGIN)
+    } else {
+        anchor
+            .y
+            .saturating_sub(window_height)
+            .saturating_sub(PANEL_MARGIN)
+    };
+
+    PhysicalPosition::new(x, y)
 }
 
 fn remember_tray_anchor(app: &tauri::AppHandle, anchor: TrayAnchor) {
@@ -985,6 +1048,14 @@ impl TrayAnchor {
 
     fn center_y(self) -> f64 {
         f64::from(self.y) + f64::from(self.height) / 2.0
+    }
+
+    fn center_x_i32(self) -> i32 {
+        self.x.saturating_add(self.width / 2)
+    }
+
+    fn center_y_i32(self) -> i32 {
+        self.y.saturating_add(self.height / 2)
     }
 }
 
