@@ -100,7 +100,7 @@ struct TorCheckResponse {
     ip: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct SpeedSample {
     download_mbps: Option<f64>,
     upload_mbps: Option<f64>,
@@ -493,6 +493,7 @@ async fn measure_upload_mbps(client: &reqwest::Client) -> Result<f64, String> {
     ))
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn megabits_per_second(bytes: u64, duration: Duration) -> f64 {
     let seconds = duration.as_secs_f64().max(0.001);
 
