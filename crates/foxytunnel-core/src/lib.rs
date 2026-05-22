@@ -4,6 +4,8 @@ mod socks;
 
 use arti_client::{BootstrapBehavior, TorClient, TorClientConfig, config::TorClientConfigBuilder};
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{error::Error, fmt};
 use std::{
     fs,
@@ -244,8 +246,30 @@ impl TorStorageDirs {
     fn prepare(&self) -> TorServiceResult<()> {
         fs::create_dir_all(&self.state_dir)
             .and_then(|()| fs::create_dir_all(&self.cache_dir))
-            .map_err(|error| TorServiceError::CreateClient(error.to_string()))
+            .map_err(|error| TorServiceError::CreateClient(error.to_string()))?;
+        set_private_storage_permissions(&self.state_dir)?;
+        set_private_storage_permissions(&self.cache_dir)
     }
+}
+
+#[cfg(unix)]
+fn set_private_storage_permissions(path: &Path) -> TorServiceResult<()> {
+    if let Some(parent) = path.parent() {
+        set_private_dir_permissions(parent)?;
+    }
+
+    set_private_dir_permissions(path)
+}
+
+#[cfg(unix)]
+fn set_private_dir_permissions(path: &Path) -> TorServiceResult<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|error| TorServiceError::CreateClient(error.to_string()))
+}
+
+#[cfg(not(unix))]
+fn set_private_storage_permissions(_path: &Path) -> TorServiceResult<()> {
+    Ok(())
 }
 
 /// Errors from the embedded Tor runtime boundary.
@@ -305,7 +329,7 @@ impl TorService {
             .bootstrap_behavior(config.bootstrap_behavior())
             .create_unbootstrapped_async()
             .await
-            .map_err(|error| TorServiceError::CreateClient(error.to_string()))?;
+            .map_err(|error| TorServiceError::CreateClient(format_error_chain(&error)))?;
 
         Ok(Self {
             config,
@@ -377,12 +401,25 @@ impl TorService {
                 Ok(())
             }
             Err(error) => {
-                let message = error.to_string();
+                let message = format_error_chain(&error);
                 self.status = TorStatus::Failed(message.clone());
                 Err(TorServiceError::Bootstrap(message))
             }
         }
     }
+}
+
+fn format_error_chain(error: &dyn Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+
+    while let Some(error) = source {
+        message.push_str(": ");
+        message.push_str(&error.to_string());
+        source = error.source();
+    }
+
+    message
 }
 
 fn install_crypto_provider() {
