@@ -17,6 +17,7 @@ import type { LogLine, ProxyStatus, TorRouteStatus } from "../types";
 
 type MainViewProps = {
   endpoint: string;
+  exitCountry: string | null;
   status: ProxyStatus;
   actionInFlight: boolean;
   torTestInFlight: boolean;
@@ -28,7 +29,6 @@ type MainViewProps = {
   onPrimaryAction: () => void;
   onCopyEndpoint: () => void;
   onTestTor: () => void;
-  onRefresh: () => void;
   onClearLogs: () => void;
 };
 
@@ -127,6 +127,7 @@ function torResultMeta(status: TorRouteStatus, text: string, detail: string, inF
 
 export function MainView({
   endpoint,
+  exitCountry,
   status,
   actionInFlight,
   torTestInFlight,
@@ -138,7 +139,6 @@ export function MainView({
   onPrimaryAction,
   onCopyEndpoint,
   onTestTor,
-  onRefresh,
   onClearLogs,
 }: MainViewProps) {
   const meta = statusMeta[status];
@@ -186,7 +186,10 @@ export function MainView({
                   {isRunning ? <span className="size-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.9)]" /> : null}
                 </div>
                 <p className="mt-1 text-[0.72rem] font-bold text-[#b8a494]">{statusDetail(status)}</p>
-                <p className="mt-0.5 break-all text-[0.72rem] font-bold text-[#8f7d70]">SOCKS {endpoint}</p>
+                <p className="mt-0.5 break-all text-[0.72rem] font-bold text-[#8f7d70]">
+                  SOCKS {endpoint}
+                  {exitCountry ? ` · Exit: ${exitCountry}` : ""}
+                </p>
               </div>
               <Button className="ghost-button" size="sm" variant="outline" onPress={onCopyEndpoint}>
                 <Copy size={14} />
@@ -250,7 +253,7 @@ export function MainView({
             </Button>
           </motion.div>
 
-          <LiveLog lines={logs} onClear={onClearLogs} onRefresh={onRefresh} />
+          <LiveLog lines={logs} onClear={onClearLogs} />
         </motion.section>
       ) : null}
     </AnimatePresence>

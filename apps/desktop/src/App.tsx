@@ -24,6 +24,7 @@ const DEFAULT_STATUS: StatusDto = {
   endpoint: "127.0.0.1:19050",
   socks_port: 19050,
   log_connections: false,
+  exit_country: null,
   bootstrap_timeout_seconds: 120,
   last_error: null,
 };
@@ -36,6 +37,7 @@ function optionsFromStatus(status: StatusDto): StartOptions {
   return {
     socks_port: status.socks_port,
     log_connections: status.log_connections,
+    exit_country: status.exit_country ?? null,
     bootstrap_timeout_seconds: status.bootstrap_timeout_seconds,
   };
 }
@@ -54,6 +56,7 @@ export default function App() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [actionInFlight, setActionInFlight] = useState(false);
   const [torTestInFlight, setTorTestInFlight] = useState(false);
+  const [resetInFlight, setResetInFlight] = useState(false);
   const [routeIpText, setRouteIpText] = useState("Tor route not checked");
   const [routeDetailText, setRouteDetailText] = useState("Start proxy to enable verification");
   const [routeStatus, setRouteStatus] = useState<TorRouteStatus>("untested");
@@ -85,6 +88,8 @@ export default function App() {
         },
       ].slice(-MAX_VISIBLE_LOG_LINES),
     );
+
+    invoke("append_activity_log", { level, message }).catch(() => {});
   }, []);
 
   const appendBackendLog = useCallback(
@@ -226,11 +231,39 @@ export default function App() {
   }, [refreshStatus, startSocks, status.status, stopSocks, writeLog]);
 
   const copyEndpoint = useCallback(async () => {
+    await copyText(status.endpoint);
+    writeLog("Endpoint copied.");
+  }, [status.endpoint, writeLog]);
+
+  const resetTorData = useCallback(async () => {
+    setResetInFlight(true);
+    writeLog("Resetting Tor data...");
+
+    try {
+      await invoke("reset_tor_data");
+    } catch (error) {
+      writeLog(String(error), "error");
+      refreshStatus().catch(() => {});
+    } finally {
+      setResetInFlight(false);
+    }
+  }, [refreshStatus, writeLog]);
+
+  const openLogFolder = useCallback(async () => {
+    try {
+      await invoke<string>("open_log_folder");
+      writeLog("Log folder opened.");
+    } catch (error) {
+      writeLog(String(error), "error");
+    }
+  }, [writeLog]);
+
+  async function copyText(text: string) {
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(status.endpoint);
+      await navigator.clipboard.writeText(text);
     } else {
       const textArea = document.createElement("textarea");
-      textArea.value = status.endpoint;
+      textArea.value = text;
       textArea.setAttribute("readonly", "");
       textArea.style.position = "fixed";
       textArea.style.opacity = "0";
@@ -243,9 +276,7 @@ export default function App() {
         textArea.remove();
       }
     }
-
-    writeLog("Endpoint copied.");
-  }, [status.endpoint, writeLog]);
+  }
 
   const testTorConnection = useCallback(async () => {
     if (status.status !== "Running") {
@@ -262,7 +293,7 @@ export default function App() {
 
     try {
       const result = await invoke<TorCheckDto>("test_tor_connection");
-      setRouteIpText(result.ip ? `Exit IP: ${result.ip}` : result.message);
+      setRouteIpText(result.ip ?? result.message);
       setRouteDetailText(result.latency_ms ? `${result.latency_ms} ms latency` : "Latency unavailable");
       setRouteStatus(result.status);
     } catch (error) {
@@ -349,6 +380,7 @@ export default function App() {
           endpoint={status.endpoint}
           isVisible={view === "main"}
           logs={logs}
+          exitCountry={status.exit_country ?? null}
           status={status.status}
           torTestInFlight={torTestInFlight}
           routeDetailText={routeDetailText}
@@ -361,17 +393,17 @@ export default function App() {
             copyEndpoint().catch((error) => writeLog(String(error), "error"));
           }}
           onPrimaryAction={handlePrimaryAction}
-          onRefresh={() => {
-            refreshStatus().catch((error) => writeLog(String(error), "error"));
-          }}
           onTestTor={testTorConnection}
         />
         <SettingsView
           isDisabled={settingsDisabled}
           isVisible={view === "settings"}
+          resetInFlight={resetInFlight}
           settings={settings}
           status={status.status}
           onBack={() => setView("main")}
+          onOpenLogFolder={openLogFolder}
+          onResetTorData={resetTorData}
           onSettingsChange={handleSettingsChange}
         />
       </div>

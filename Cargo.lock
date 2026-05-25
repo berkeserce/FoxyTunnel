@@ -146,6 +146,7 @@ dependencies = [
  "tor-dircommon",
  "tor-dirmgr",
  "tor-error",
+ "tor-geoip",
  "tor-guardmgr",
  "tor-keymgr",
  "tor-linkspec",
@@ -4340,6 +4341,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rangemap"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "973443cf09a9c8656b574a866ab68dfa19f0867d0340648c7d2f6a71b8a8ea68"
+
+[[package]]
 name = "raw-window-handle"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6259,6 +6266,7 @@ dependencies = [
  "tor-config",
  "tor-dircommon",
  "tor-error",
+ "tor-geoip",
  "tor-guardmgr",
  "tor-linkspec",
  "tor-memquota",
@@ -6434,6 +6442,7 @@ dependencies = [
  "tor-dirclient",
  "tor-dircommon",
  "tor-error",
+ "tor-geoip",
  "tor-guardmgr",
  "tor-llcrypto",
  "tor-netdir",
@@ -6475,6 +6484,24 @@ dependencies = [
  "thiserror 2.0.18",
  "void",
 ]
+
+[[package]]
+name = "tor-geoip"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90597076184903139f08b9c39d7491447d3fb73adcc91c404634104e1794cb24"
+dependencies = [
+ "derive_more",
+ "rangemap",
+ "thiserror 2.0.18",
+ "tor-geoip-db",
+]
+
+[[package]]
+name = "tor-geoip-db"
+version = "0.1.0-pre2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5baacfe724d837c0da5558fe5e544b0c99181001606b9eb066e4fd98a9b77952"
 
 [[package]]
 name = "tor-guardmgr"
@@ -6760,6 +6787,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tor-basic-utils",
  "tor-error",
+ "tor-geoip",
  "tor-linkspec",
  "tor-llcrypto",
  "tor-netdoc",
@@ -6933,6 +6961,7 @@ dependencies = [
  "rand 0.9.4",
  "serde",
  "tor-basic-utils",
+ "tor-geoip",
  "tor-linkspec",
  "tor-netdir",
  "tor-netdoc",

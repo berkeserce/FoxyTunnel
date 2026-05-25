@@ -5,10 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -20,6 +22,7 @@ const MAX_LOG_LINES: usize = 500;
 const MAIN_WINDOW_LABEL: &str = "main";
 const PANEL_MARGIN: i32 = 16;
 const APP_ICON_BYTES: &[u8] = include_bytes!("../icons/fav1.png");
+const SUPPORTED_EXIT_COUNTRIES: &[&str] = &["TR", "DE", "NL", "FR", "GB", "US", "CA", "SE"];
 
 type TaskHandle = tauri::async_runtime::JoinHandle<()>;
 
@@ -27,6 +30,7 @@ type TaskHandle = tauri::async_runtime::JoinHandle<()>;
 struct AppState {
     config: Mutex<FoxyTunnelConfig>,
     config_path: StdMutex<Option<PathBuf>>,
+    log_path: StdMutex<Option<PathBuf>>,
     proxy: Mutex<ProxyState>,
     logs: StdMutex<VecDeque<LogDto>>,
     last_tray_anchor: StdMutex<Option<TrayAnchor>>,
@@ -54,6 +58,7 @@ struct StatusDto {
     endpoint: String,
     socks_port: u16,
     log_connections: bool,
+    exit_country: Option<String>,
     bootstrap_timeout_seconds: u64,
     last_error: Option<String>,
 }
@@ -95,10 +100,11 @@ struct TorCheckResponse {
     ip: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct StartOptions {
     socks_port: u16,
     log_connections: bool,
+    exit_country: Option<String>,
     bootstrap_timeout_seconds: u64,
 }
 
@@ -144,6 +150,30 @@ fn hide_panel_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn open_log_folder(app: tauri::AppHandle) -> Result<String, String> {
+    let path = app
+        .path()
+        .app_log_dir()
+        .map_err(|error| format!("failed to locate app log directory: {error}"))?;
+    fs::create_dir_all(&path)
+        .map_err(|error| format!("failed to create log directory: {error}"))?;
+    open_path(&path)?;
+
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn append_activity_log(
+    state: State<'_, Arc<AppState>>,
+    level: String,
+    message: String,
+) -> Result<(), String> {
+    append_log_line_to_disk(&state, normalize_log_level(&level), &message)
+}
+
+#[tauri::command]
 async fn save_settings(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -170,6 +200,22 @@ async fn save_settings(
     );
 
     Ok(status_dto(&state).await)
+}
+
+#[tauri::command]
+async fn reset_tor_data(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    if !is_proxy_editable(&state).await {
+        return Err("Tor data can only be reset while FoxyTunnel is stopped.".to_string());
+    }
+
+    let config = state.config.lock().await.clone();
+    reset_tor_data_dirs(&config)?;
+    emit_log(&app, &state, "info", "Tor data reset complete");
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -465,27 +511,121 @@ fn notify_user(app: &tauri::AppHandle, title: impl Into<String>, body: impl Into
 }
 
 fn push_log(state: &Arc<AppState>, level: &'static str, message: String) -> LogDto {
-    let Ok(mut logs) = state.logs.lock() else {
-        return LogDto {
-            sequence: 0,
+    let entry = {
+        let Ok(mut logs) = state.logs.lock() else {
+            let entry = LogDto {
+                sequence: 0,
+                level,
+                message,
+            };
+            let _ = append_log_line_to_disk(state, entry.level, &entry.message);
+            return entry;
+        };
+
+        let sequence = logs.back().map_or(1, |entry| entry.sequence + 1);
+        let entry = LogDto {
+            sequence,
             level,
             message,
         };
+
+        logs.push_back(entry.clone());
+        while logs.len() > MAX_LOG_LINES {
+            logs.pop_front();
+        }
+
+        entry
     };
 
-    let sequence = logs.back().map_or(1, |entry| entry.sequence + 1);
-    let entry = LogDto {
-        sequence,
-        level,
-        message,
-    };
-
-    logs.push_back(entry.clone());
-    while logs.len() > MAX_LOG_LINES {
-        logs.pop_front();
-    }
+    let _ = append_log_line_to_disk(state, entry.level, &entry.message);
 
     entry
+}
+
+fn append_log_line_to_disk(
+    state: &Arc<AppState>,
+    level: &'static str,
+    message: &str,
+) -> Result<(), String> {
+    let Some(path) = state
+        .log_path
+        .lock()
+        .map_err(|_| "log path is unavailable".to_string())?
+        .clone()
+    else {
+        return Ok(());
+    };
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create log directory: {error}"))?;
+    }
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("failed to open log file: {error}"))?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let message = sanitize_log_message(message);
+
+    writeln!(file, "[{timestamp}] {}: {message}", level.to_uppercase())
+        .map_err(|error| format!("failed to write log file: {error}"))
+}
+
+fn sanitize_log_message(message: &str) -> String {
+    message.replace(['\r', '\n'], " ")
+}
+
+fn normalize_log_level(level: &str) -> &'static str {
+    if level.eq_ignore_ascii_case("error") {
+        "error"
+    } else {
+        "info"
+    }
+}
+
+fn init_log_file(app: &tauri::AppHandle, state: &Arc<AppState>) -> Result<(), String> {
+    let path = log_file_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create log directory: {error}"))?;
+    }
+
+    *state
+        .log_path
+        .lock()
+        .map_err(|_| "log path is unavailable".to_string())? = Some(path);
+
+    Ok(())
+}
+
+fn log_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let process_id = std::process::id();
+
+    app.path()
+        .app_log_dir()
+        .map(|path| path.join(format!("foxytunnel-{stamp}-{process_id}.log")))
+        .map_err(|error| format!("failed to locate app log directory: {error}"))
+}
+
+fn open_path(path: &Path) -> Result<(), String> {
+    let result = if cfg!(target_os = "windows") {
+        Command::new("explorer").arg(path).spawn()
+    } else if cfg!(target_os = "macos") {
+        Command::new("open").arg(path).spawn()
+    } else {
+        Command::new("xdg-open").arg(path).spawn()
+    };
+
+    result
+        .map(|_| ())
+        .map_err(|error| format!("failed to open {}: {error}", path.display()))
 }
 
 async fn status_dto(state: &Arc<AppState>) -> StatusDto {
@@ -517,9 +657,34 @@ fn apply_start_options(config: &mut FoxyTunnelConfig, options: StartOptions) -> 
 
     config.socks_port = options.socks_port;
     config.log_connections = options.log_connections;
+    config.exit_country = normalize_exit_country(options.exit_country)?;
     config.bootstrap_timeout_seconds = options.bootstrap_timeout_seconds;
 
     Ok(())
+}
+
+fn normalize_exit_country(country: Option<String>) -> Result<Option<String>, String> {
+    let Some(country) = country else {
+        return Ok(None);
+    };
+    let code = country.trim().to_ascii_uppercase();
+
+    if code.is_empty() || code == "AUTO" {
+        return Ok(None);
+    }
+
+    if code.len() != 2 || !code.bytes().all(|byte| byte.is_ascii_uppercase()) {
+        return Err("Exit country must be an ISO alpha-2 country code.".to_string());
+    }
+
+    if !SUPPORTED_EXIT_COUNTRIES.contains(&code.as_str()) {
+        return Err(format!(
+            "Unsupported exit country {code}. Supported countries: {}",
+            SUPPORTED_EXIT_COUNTRIES.join(", ")
+        ));
+    }
+
+    Ok(Some(code))
 }
 
 fn load_persisted_config(app: &tauri::AppHandle, state: &Arc<AppState>) -> Result<(), String> {
@@ -593,6 +758,24 @@ fn write_config_to_file(path: &Path, config: &FoxyTunnelConfig) -> Result<(), St
     fs::write(path, contents).map_err(|error| format!("failed to write config: {error}"))
 }
 
+fn reset_tor_data_dirs(config: &FoxyTunnelConfig) -> Result<(), String> {
+    remove_dir_if_exists(&config.arti_state_dir)?;
+
+    if config.arti_cache_dir != config.arti_state_dir {
+        remove_dir_if_exists(&config.arti_cache_dir)?;
+    }
+
+    Ok(())
+}
+
+fn remove_dir_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("failed to remove {}: {error}", path.display())),
+    }
+}
+
 fn endpoint_from_config(config: &FoxyTunnelConfig) -> String {
     format!("{}:{}", config.socks_host, config.socks_port)
 }
@@ -603,6 +786,7 @@ fn status_from_parts(config: &FoxyTunnelConfig, proxy: &ProxyState) -> StatusDto
         endpoint: endpoint_from_config(config),
         socks_port: config.socks_port,
         log_connections: config.log_connections,
+        exit_country: config.exit_country.clone(),
         bootstrap_timeout_seconds: config.bootstrap_timeout_seconds,
         last_error: proxy.last_error.clone(),
     }
@@ -614,6 +798,10 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let state = Arc::clone(app.state::<Arc<AppState>>().inner());
+            if let Err(error) = init_log_file(app.handle(), &state) {
+                emit_log(app.handle(), &state, "error", error);
+            }
+            emit_log(app.handle(), &state, "info", "FoxyTunnel session started");
             if let Err(error) = load_persisted_config(app.handle(), &state) {
                 emit_log(app.handle(), &state, "error", error);
             }
@@ -633,10 +821,13 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            append_activity_log,
             clear_activity_logs,
             get_activity_logs,
             get_status,
             hide_panel_window,
+            open_log_folder,
+            reset_tor_data,
             save_settings,
             start_socks,
             stop_socks,
@@ -931,7 +1122,8 @@ impl TrayAnchor {
 mod tests {
     use super::{
         StartOptions, TorCheckResponse, TorCheckStatus, apply_start_options,
-        config_file_path_from_dir, tor_check_from_response, write_config_to_file,
+        config_file_path_from_dir, normalize_exit_country, reset_tor_data_dirs,
+        tor_check_from_response, write_config_to_file,
     };
     use foxytunnel_core::FoxyTunnelConfig;
     use std::path::Path;
@@ -957,6 +1149,7 @@ mod tests {
         let config = FoxyTunnelConfig {
             socks_port: 19_051,
             log_connections: true,
+            exit_country: Some("DE".to_string()),
             bootstrap_timeout_seconds: 90,
             ..FoxyTunnelConfig::default()
         };
@@ -976,12 +1169,53 @@ mod tests {
             StartOptions {
                 socks_port: 19_050,
                 log_connections: false,
+                exit_country: None,
                 bootstrap_timeout_seconds: 5,
             },
         );
 
         assert!(result.is_err());
         assert_eq!(config.bootstrap_timeout_seconds, 120);
+    }
+
+    #[test]
+    fn exit_country_is_normalized_and_validated() {
+        assert_eq!(
+            normalize_exit_country(Some("de".to_string())).expect("country should normalize"),
+            Some("DE".to_string())
+        );
+        assert_eq!(
+            normalize_exit_country(Some("auto".to_string())).expect("auto should clear country"),
+            None
+        );
+        assert!(normalize_exit_country(Some("ZZ".to_string())).is_err());
+        assert!(normalize_exit_country(Some("DEU".to_string())).is_err());
+    }
+
+    #[test]
+    fn reset_tor_data_removes_state_and_cache_only() {
+        let dir = unique_temp_dir();
+        let config_path = config_file_path_from_dir(&dir);
+        let state_dir = dir.join("state");
+        let cache_dir = dir.join("cache");
+        std::fs::create_dir_all(&state_dir).expect("state dir should be created");
+        std::fs::create_dir_all(&cache_dir).expect("cache dir should be created");
+        std::fs::write(state_dir.join("state.txt"), "state").expect("state file should be written");
+        std::fs::write(cache_dir.join("cache.txt"), "cache").expect("cache file should be written");
+
+        let config = FoxyTunnelConfig {
+            arti_state_dir: state_dir.clone(),
+            arti_cache_dir: cache_dir.clone(),
+            ..FoxyTunnelConfig::default()
+        };
+        write_config_to_file(&config_path, &config).expect("config should save");
+
+        reset_tor_data_dirs(&config).expect("tor data should reset");
+
+        assert!(!state_dir.exists());
+        assert!(!cache_dir.exists());
+        assert!(config_path.exists());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn unique_temp_dir() -> std::path::PathBuf {

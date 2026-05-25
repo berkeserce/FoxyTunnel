@@ -1,11 +1,12 @@
 //! Minimal SOCKS5 server backed by Arti.
 
 use crate::SocksEndpoint;
-use arti_client::TorClient;
+use arti_client::{CountryCode, StreamPrefs, TorClient};
 use std::{
     error::Error,
     fmt, io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    str::FromStr,
     sync::Arc,
 };
 use tokio::{
@@ -118,6 +119,8 @@ pub struct SocksServer {
 pub struct SocksServerConfig {
     /// Whether accepted CONNECT targets should be printed to stderr.
     pub log_connections: bool,
+    /// Optional strict ISO alpha-2 Tor exit country.
+    pub exit_country: Option<String>,
     /// Optional event sink for GUI or service-layer logs.
     pub event_sink: Option<SocksEventSink>,
 }
@@ -127,6 +130,7 @@ impl fmt::Debug for SocksServerConfig {
         formatter
             .debug_struct("SocksServerConfig")
             .field("log_connections", &self.log_connections)
+            .field("exit_country", &self.exit_country)
             .field("event_sink", &self.event_sink.is_some())
             .finish()
     }
@@ -196,7 +200,7 @@ async fn handle_connection(
         config.emit(SocksServerEvent::Connect(target.to_string()));
     }
 
-    let mut outbound = match connect_tor(&client, &target).await {
+    let mut outbound = match connect_tor(&client, &target, &config).await {
         Ok(stream) => stream,
         Err(error) => {
             write_reply(&mut inbound, REPLY_GENERAL_FAILURE).await?;
@@ -232,11 +236,32 @@ fn is_expected_disconnect(error: &io::Error) -> bool {
 async fn connect_tor(
     client: &TorClient<PreferredRuntime>,
     target: &SocksTarget,
-) -> arti_client::Result<arti_client::DataStream> {
+    config: &SocksServerConfig,
+) -> Result<arti_client::DataStream, String> {
+    let prefs = stream_prefs_from_config(config)?;
+
     match target {
-        SocksTarget::Domain { host, port } => client.connect((host.as_str(), *port)).await,
-        SocksTarget::Ip { address, port } => client.connect((address.to_string(), *port)).await,
+        SocksTarget::Domain { host, port } => client
+            .connect_with_prefs((host.as_str(), *port), &prefs)
+            .await
+            .map_err(|error| error.to_string()),
+        SocksTarget::Ip { address, port } => client
+            .connect_with_prefs((address.to_string(), *port), &prefs)
+            .await
+            .map_err(|error| error.to_string()),
     }
+}
+
+fn stream_prefs_from_config(config: &SocksServerConfig) -> Result<StreamPrefs, String> {
+    let mut prefs = StreamPrefs::new();
+
+    if let Some(country) = &config.exit_country {
+        let country_code = CountryCode::from_str(country)
+            .map_err(|error| format!("invalid exit country {country}: {error}"))?;
+        prefs.exit_country(country_code);
+    }
+
+    Ok(prefs)
 }
 
 async fn negotiate_no_auth(stream: &mut TcpStream) -> SocksServerResult<()> {

@@ -5,6 +5,7 @@ export type StatusDto = {
   endpoint: string;
   socks_port: number;
   log_connections: boolean;
+  exit_country?: string | null;
   bootstrap_timeout_seconds: number;
   last_error?: string | null;
 };
@@ -28,6 +29,7 @@ export type LogsDto = {
 export type StartOptions = {
   socks_port: number;
   log_connections: boolean;
+  exit_country?: string | null;
   bootstrap_timeout_seconds: number;
 };
 

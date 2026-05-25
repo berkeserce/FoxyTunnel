@@ -145,6 +145,21 @@ input {
   color: #8d7d70;
 }
 
+select.fox-input {
+  color-scheme: dark;
+  appearance: auto;
+}
+
+select.fox-input option {
+  background: #100c09;
+  color: #fff2e5;
+}
+
+select.fox-input option:checked {
+  background: #3b2819;
+  color: #fcd9a5;
+}
+
 .foxy-switch {
   display: flex;
   width: 100%;

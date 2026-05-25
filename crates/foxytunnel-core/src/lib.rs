@@ -25,6 +25,8 @@ pub struct FoxyTunnelConfig {
     pub socks_port: u16,
     /// Whether accepted SOCKS CONNECT targets should be logged.
     pub log_connections: bool,
+    /// Optional strict Tor exit country as an ISO alpha-2 code.
+    pub exit_country: Option<String>,
     /// Tor bootstrap timeout in seconds.
     pub bootstrap_timeout_seconds: u64,
     /// Arti persistent state directory.
@@ -39,6 +41,7 @@ impl Default for FoxyTunnelConfig {
             socks_host: "127.0.0.1".to_string(),
             socks_port: 19_050,
             log_connections: false,
+            exit_country: None,
             bootstrap_timeout_seconds: 120,
             arti_state_dir: PathBuf::from("target/foxytunnel/arti-state"),
             arti_cache_dir: PathBuf::from("target/foxytunnel/arti-cache"),
@@ -85,6 +88,7 @@ impl FoxyTunnelConfig {
     pub fn socks_server_config(&self) -> SocksServerConfig {
         SocksServerConfig {
             log_connections: self.log_connections,
+            exit_country: self.exit_country.clone(),
             event_sink: None,
         }
     }
@@ -507,6 +511,7 @@ mod tests {
         assert_eq!(config.socks_host, "127.0.0.1");
         assert_eq!(config.socks_port, 19_050);
         assert!(!config.log_connections);
+        assert_eq!(config.exit_country, None);
         assert_eq!(config.bootstrap_timeout_seconds, 120);
     }
 
@@ -515,6 +520,7 @@ mod tests {
         let config = FoxyTunnelConfig {
             socks_port: 19_051,
             log_connections: true,
+            exit_country: Some("DE".to_string()),
             ..FoxyTunnelConfig::default()
         };
         let tor_config = config.tor_service_config();
@@ -522,6 +528,7 @@ mod tests {
 
         assert_eq!(tor_config.socks_endpoint.authority(), "127.0.0.1:19051");
         assert!(socks_config.log_connections);
+        assert_eq!(socks_config.exit_country.as_deref(), Some("DE"));
     }
 
     #[test]
@@ -531,6 +538,7 @@ mod tests {
 
         assert_eq!(config.socks_host, "127.0.0.1");
         assert_eq!(config.socks_port, 19_052);
+        assert_eq!(config.exit_country, None);
     }
 
     #[test]

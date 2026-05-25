@@ -1,17 +1,16 @@
 import { Button, ScrollShadow } from "@heroui/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { RefreshCw, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { logLineVariants, quickTransition } from "../motionPresets";
 import type { LogLine } from "../types";
 
 type LiveLogProps = {
   lines: LogLine[];
-  onRefresh: () => void;
   onClear: () => void;
 };
 
-export function LiveLog({ lines, onRefresh, onClear }: LiveLogProps) {
+export function LiveLog({ lines, onClear }: LiveLogProps) {
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -33,10 +32,6 @@ export function LiveLog({ lines, onRefresh, onClear }: LiveLogProps) {
           <span className="text-[0.76rem] font-black text-[#b8a494]">Live log</span>
         </div>
         <div className="flex gap-2">
-          <Button className="ghost-button" size="sm" variant="outline" onPress={onRefresh}>
-            <RefreshCw size={14} />
-            Refresh
-          </Button>
           <Button className="ghost-button" size="sm" variant="outline" onPress={onClear}>
             <Trash2 size={14} />
             Clear
