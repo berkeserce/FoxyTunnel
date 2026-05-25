@@ -36,8 +36,6 @@ export type TorCheckDto = {
   is_tor: boolean;
   ip?: string | null;
   latency_ms?: number | null;
-  download_mbps?: number | null;
-  upload_mbps?: number | null;
   message: string;
 };
 

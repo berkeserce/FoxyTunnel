@@ -3,13 +3,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   CheckCircle2,
   Copy,
-  Download,
   Loader2,
   Play,
   ShieldCheck,
   ShieldX,
   Square,
-  Upload,
   WifiOff,
 } from "lucide-react";
 import { LiveLog } from "./LiveLog";
@@ -25,8 +23,6 @@ type MainViewProps = {
   routeStatus: string;
   routeIpText: string;
   routeDetailText: string;
-  routeDownloadMbps: number | null;
-  routeUploadMbps: number | null;
   logs: LogLine[];
   isVisible: boolean;
   onPrimaryAction: () => void;
@@ -71,9 +67,9 @@ function torIcon(status: string, inFlight: boolean) {
 function torResultMeta(status: string, text: string, detail: string, inFlight: boolean) {
   if (inFlight) {
     return {
-      className: "border-amber-700/70 bg-amber-950/35 text-amber-100",
+      className: "text-amber-200",
       label: "Checking",
-      detail: "Speed test running",
+      detail: "Contacting Tor Check",
       text: "Checking...",
     };
   }
@@ -113,18 +109,6 @@ function torResultMeta(status: string, text: string, detail: string, inFlight: b
   };
 }
 
-function formatMbps(value: number | null) {
-  if (value === null) {
-    return "--";
-  }
-
-  if (value >= 10) {
-    return value.toFixed(1);
-  }
-
-  return value.toFixed(2);
-}
-
 export function MainView({
   endpoint,
   status,
@@ -133,8 +117,6 @@ export function MainView({
   routeStatus,
   routeIpText,
   routeDetailText,
-  routeDownloadMbps,
-  routeUploadMbps,
   logs,
   isVisible,
   onPrimaryAction,
@@ -210,14 +192,6 @@ export function MainView({
                 </span>
                 <span className="ml-[22px] flex min-w-0 items-center gap-2 truncate text-[0.66rem] font-bold opacity-70">
                   <span className="truncate">{torResult.detail}</span>
-                  <span className="inline-flex flex-none items-center gap-0.5">
-                    <Download size={10} />
-                    {formatMbps(routeDownloadMbps)}
-                  </span>
-                  <span className="inline-flex flex-none items-center gap-0.5">
-                    <Upload size={10} />
-                    {formatMbps(routeUploadMbps)}
-                  </span>
                 </span>
               </motion.span>
               <Button

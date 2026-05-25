@@ -45,10 +45,8 @@ export default function App() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [actionInFlight, setActionInFlight] = useState(false);
   const [torTestInFlight, setTorTestInFlight] = useState(false);
-  const [routeIpText, setRouteIpText] = useState("Default IP: Checking...");
-  const [routeDetailText, setRouteDetailText] = useState("Direct route");
-  const [routeDownloadMbps, setRouteDownloadMbps] = useState<number | null>(null);
-  const [routeUploadMbps, setRouteUploadMbps] = useState<number | null>(null);
+  const [routeIpText, setRouteIpText] = useState("Not tested");
+  const [routeDetailText, setRouteDetailText] = useState("Start proxy to verify Tor");
   const [routeStatus, setRouteStatus] = useState("unavailable");
   const lastLogSequence = useRef(0);
   const localLogSequence = useRef(0);
@@ -242,52 +240,23 @@ export default function App() {
 
     setTorTestInFlight(true);
     setRouteIpText("Testing Tor route");
-    setRouteDetailText("Speed test running");
-    setRouteDownloadMbps(null);
-    setRouteUploadMbps(null);
+    setRouteDetailText("Contacting Tor Check");
     setRouteStatus("");
 
     try {
       const result = await invoke<TorCheckDto>("test_tor_connection");
       setRouteIpText(result.ip ?? result.message);
       setRouteDetailText(result.latency_ms ? `${result.latency_ms} ms latency` : "Latency unavailable");
-      setRouteDownloadMbps(result.download_mbps ?? null);
-      setRouteUploadMbps(result.upload_mbps ?? null);
       setRouteStatus(result.status);
     } catch (error) {
-      setRouteIpText("Default IP unavailable");
+      setRouteIpText("Tor check unavailable");
       setRouteDetailText(String(error));
-      setRouteDownloadMbps(null);
-      setRouteUploadMbps(null);
       setRouteStatus("unavailable");
       writeLog(String(error), "error");
     } finally {
       setTorTestInFlight(false);
     }
   }, [status.status, writeLog]);
-
-  const refreshDefaultIp = useCallback(async () => {
-    setRouteStatus("unavailable");
-    setRouteIpText("Checking...");
-    setRouteDetailText("Direct route");
-    setRouteDownloadMbps(null);
-    setRouteUploadMbps(null);
-
-    try {
-      const result = await invoke<TorCheckDto>("get_default_ip");
-      setRouteIpText(result.ip ?? result.message);
-      setRouteDetailText(result.latency_ms ? `${result.latency_ms} ms latency` : "Latency unavailable");
-      setRouteDownloadMbps(result.download_mbps ?? null);
-      setRouteUploadMbps(result.upload_mbps ?? null);
-      setRouteStatus("not_tor");
-    } catch (error) {
-      setRouteIpText("Default IP unavailable");
-      setRouteDetailText(String(error));
-      setRouteDownloadMbps(null);
-      setRouteUploadMbps(null);
-      setRouteStatus("unavailable");
-    }
-  }, []);
 
   const clearActivityLogs = useCallback(async () => {
     await invoke("clear_activity_logs");
@@ -324,12 +293,6 @@ export default function App() {
   useEffect(() => {
     refreshStatus(true).catch((error) => writeLog(String(error), "error"));
   }, [refreshStatus, writeLog]);
-
-  useEffect(() => {
-    if (status.status === "Stopped" || status.status === "Error") {
-      refreshDefaultIp().catch((error) => writeLog(String(error), "error"));
-    }
-  }, [refreshDefaultIp, status.status, writeLog]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -372,10 +335,8 @@ export default function App() {
           status={status.status}
           torTestInFlight={torTestInFlight}
           routeDetailText={routeDetailText}
-          routeDownloadMbps={routeDownloadMbps}
           routeIpText={routeIpText}
           routeStatus={routeStatus}
-          routeUploadMbps={routeUploadMbps}
           onClearLogs={() => {
             clearActivityLogs().catch((error) => writeLog(String(error), "error"));
           }}

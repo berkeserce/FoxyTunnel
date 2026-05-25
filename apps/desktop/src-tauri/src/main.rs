@@ -20,10 +20,6 @@ const MAX_LOG_LINES: usize = 500;
 const MAIN_WINDOW_LABEL: &str = "main";
 const PANEL_MARGIN: i32 = 16;
 const APP_ICON_BYTES: &[u8] = include_bytes!("../icons/fav1.png");
-const SPEED_TEST_DOWNLOAD_BYTES: u64 = 128 * 1024;
-const SPEED_TEST_UPLOAD_BYTES: usize = 64 * 1024;
-const SPEED_TEST_DOWNLOAD_URL: &str = "https://speed.cloudflare.com/__down";
-const SPEED_TEST_UPLOAD_URL: &str = "https://speed.cloudflare.com/__up";
 
 type TaskHandle = tauri::async_runtime::JoinHandle<()>;
 
@@ -88,8 +84,6 @@ struct TorCheckDto {
     is_tor: bool,
     ip: Option<String>,
     latency_ms: Option<u64>,
-    download_mbps: Option<f64>,
-    upload_mbps: Option<f64>,
     message: String,
 }
 
@@ -99,12 +93,6 @@ struct TorCheckResponse {
     is_tor: bool,
     #[serde(rename = "IP")]
     ip: Option<String>,
-}
-
-#[derive(Clone, Copy, Default)]
-struct SpeedSample {
-    download_mbps: Option<f64>,
-    upload_mbps: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -153,14 +141,6 @@ fn hide_panel_window(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-#[tauri::command]
-async fn get_default_ip() -> Result<TorCheckDto, String> {
-    Ok(match check_default_ip().await {
-        Ok(result) => result,
-        Err(error) => TorCheckDto::unavailable(format!("Default IP unavailable: {error}")),
-    })
 }
 
 #[tauri::command]
@@ -418,94 +398,14 @@ async fn check_tor_via_socks(endpoint: &str) -> Result<TorCheckDto, String> {
         .json::<TorCheckResponse>()
         .await
         .map_err(|error| format!("failed to read Tor Check response: {error}"))?;
-    let speed = measure_speed_sample(&client).await;
 
     Ok(tor_check_from_response(
         response,
         Some(duration_millis(start.elapsed())),
-        speed,
     ))
 }
 
-async fn check_default_ip() -> Result<TorCheckDto, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .build()
-        .map_err(|error| format!("failed to create default IP client: {error}"))?;
-    let start = Instant::now();
-    let response = client
-        .get("https://check.torproject.org/api/ip")
-        .send()
-        .await
-        .map_err(|error| format!("request failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Tor Check returned an error: {error}"))?
-        .json::<TorCheckResponse>()
-        .await
-        .map_err(|error| format!("failed to read default IP response: {error}"))?;
-    let speed = measure_speed_sample(&client).await;
-
-    Ok(default_ip_from_response(
-        response,
-        Some(duration_millis(start.elapsed())),
-        speed,
-    ))
-}
-
-async fn measure_speed_sample(client: &reqwest::Client) -> SpeedSample {
-    SpeedSample {
-        download_mbps: measure_download_mbps(client).await.ok(),
-        upload_mbps: measure_upload_mbps(client).await.ok(),
-    }
-}
-
-async fn measure_download_mbps(client: &reqwest::Client) -> Result<f64, String> {
-    let start = Instant::now();
-    let bytes = client
-        .get(SPEED_TEST_DOWNLOAD_URL)
-        .query(&[("bytes", SPEED_TEST_DOWNLOAD_BYTES)])
-        .send()
-        .await
-        .map_err(|error| format!("download test failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("download test returned an error: {error}"))?
-        .bytes()
-        .await
-        .map_err(|error| format!("download test body failed: {error}"))?;
-
-    Ok(megabits_per_second(bytes.len() as u64, start.elapsed()))
-}
-
-async fn measure_upload_mbps(client: &reqwest::Client) -> Result<f64, String> {
-    let body = vec![0_u8; SPEED_TEST_UPLOAD_BYTES];
-    let start = Instant::now();
-    client
-        .post(SPEED_TEST_UPLOAD_URL)
-        .body(body)
-        .send()
-        .await
-        .map_err(|error| format!("upload test failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("upload test returned an error: {error}"))?;
-
-    Ok(megabits_per_second(
-        SPEED_TEST_UPLOAD_BYTES as u64,
-        start.elapsed(),
-    ))
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn megabits_per_second(bytes: u64, duration: Duration) -> f64 {
-    let seconds = duration.as_secs_f64().max(0.001);
-
-    ((bytes as f64) * 8.0) / seconds / 1_000_000.0
-}
-
-fn tor_check_from_response(
-    response: TorCheckResponse,
-    latency_ms: Option<u64>,
-    speed: SpeedSample,
-) -> TorCheckDto {
+fn tor_check_from_response(response: TorCheckResponse, latency_ms: Option<u64>) -> TorCheckDto {
     if response.is_tor {
         let suffix = response
             .ip
@@ -516,8 +416,6 @@ fn tor_check_from_response(
             is_tor: true,
             ip: response.ip,
             latency_ms,
-            download_mbps: speed.download_mbps,
-            upload_mbps: speed.upload_mbps,
             message: format!("Tor connection verified.{suffix}"),
         }
     } else {
@@ -526,35 +424,8 @@ fn tor_check_from_response(
             is_tor: false,
             ip: response.ip,
             latency_ms,
-            download_mbps: speed.download_mbps,
-            upload_mbps: speed.upload_mbps,
             message: "Connection reached Tor Check but was not identified as Tor.".to_string(),
         }
-    }
-}
-
-fn default_ip_from_response(
-    response: TorCheckResponse,
-    latency_ms: Option<u64>,
-    speed: SpeedSample,
-) -> TorCheckDto {
-    let message = response.ip.as_deref().map_or_else(
-        || "Default IP detected.".to_string(),
-        |ip| format!("Default IP: {ip}"),
-    );
-
-    TorCheckDto {
-        status: if response.is_tor {
-            TorCheckStatus::Tor
-        } else {
-            TorCheckStatus::NotTor
-        },
-        is_tor: response.is_tor,
-        ip: response.ip,
-        latency_ms,
-        download_mbps: speed.download_mbps,
-        upload_mbps: speed.upload_mbps,
-        message,
     }
 }
 
@@ -569,8 +440,6 @@ impl TorCheckDto {
             is_tor: false,
             ip: None,
             latency_ms: None,
-            download_mbps: None,
-            upload_mbps: None,
             message: message.into(),
         }
     }
@@ -765,7 +634,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             clear_activity_logs,
-            get_default_ip,
             get_activity_logs,
             get_status,
             hide_panel_window,
@@ -1062,7 +930,7 @@ impl TrayAnchor {
 #[cfg(test)]
 mod tests {
     use super::{
-        SpeedSample, StartOptions, TorCheckResponse, TorCheckStatus, apply_start_options,
+        StartOptions, TorCheckResponse, TorCheckStatus, apply_start_options,
         config_file_path_from_dir, tor_check_from_response, write_config_to_file,
     };
     use foxytunnel_core::FoxyTunnelConfig;
@@ -1074,21 +942,12 @@ mod tests {
         let response: TorCheckResponse =
             serde_json::from_str(r#"{"IsTor":true,"IP":"185.220.101.1"}"#)
                 .expect("Tor Check JSON should parse");
-        let result = tor_check_from_response(
-            response,
-            Some(123),
-            SpeedSample {
-                download_mbps: Some(12.3),
-                upload_mbps: Some(4.5),
-            },
-        );
+        let result = tor_check_from_response(response, Some(123));
 
         assert_eq!(result.status, TorCheckStatus::Tor);
         assert!(result.is_tor);
         assert_eq!(result.ip.as_deref(), Some("185.220.101.1"));
         assert_eq!(result.latency_ms, Some(123));
-        assert_eq!(result.download_mbps, Some(12.3));
-        assert_eq!(result.upload_mbps, Some(4.5));
     }
 
     #[test]
