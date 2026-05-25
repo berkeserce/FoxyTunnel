@@ -145,6 +145,17 @@ input {
   color: #8d7d70;
 }
 
+.fox-input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.fox-input[type="number"]::-webkit-inner-spin-button,
+.fox-input[type="number"]::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
 select.fox-input {
   color-scheme: dark;
   appearance: auto;
