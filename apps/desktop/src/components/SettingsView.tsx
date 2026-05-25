@@ -241,7 +241,7 @@ export function SettingsView({
                 </div>
 
                 <Button
-                  className={`ghost-button h-9 w-full ${resetArmed ? "border-red-500 text-red-200 hover:bg-red-950/50" : ""}`}
+                  className={`danger-button h-10 w-full ${resetArmed ? "danger-button-armed" : ""} ${resetInFlight ? "danger-button-busy" : ""}`}
                   isDisabled={isDisabled || resetInFlight}
                   size="sm"
                   variant="outline"

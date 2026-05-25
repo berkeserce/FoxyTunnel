@@ -364,13 +364,12 @@ export default function App() {
   const settingsDisabled = !isEditableStatus(status.status) || actionInFlight;
 
   return (
-    <main className="relative flex h-screen w-full flex-col gap-3 overflow-hidden rounded-lg border border-orange-800/80 bg-[#0c0907] p-3.5 text-[#fff2e5]">
+    <main className="relative flex h-screen w-full flex-col gap-3 overflow-hidden bg-[#0c0907] p-3.5 text-[#fff2e5]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(249,115,22,0.18),transparent_34%),radial-gradient(circle_at_80%_12%,rgba(34,197,94,0.09),transparent_28%)]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-orange-400/70 to-transparent" />
       <AppHeader
         status={status.status}
         view={view}
-        onClose={hidePanel}
         onOpenSettings={() => setView("settings")}
       />
 
