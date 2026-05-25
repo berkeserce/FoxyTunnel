@@ -39,4 +39,6 @@ export type TorCheckDto = {
   message: string;
 };
 
+export type TorRouteStatus = TorCheckDto["status"] | "untested";
+
 export type ViewMode = "main" | "settings";

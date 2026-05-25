@@ -4,7 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { MainView } from "./components/MainView";
 import { SettingsView } from "./components/SettingsView";
-import type { LogDto, LogLine, LogsDto, StartOptions, StatusDto, TorCheckDto, ViewMode } from "./types";
+import type {
+  LogDto,
+  LogLine,
+  LogsDto,
+  StartOptions,
+  StatusDto,
+  TorCheckDto,
+  TorRouteStatus,
+  ViewMode,
+} from "./types";
 
 const MAX_VISIBLE_LOG_LINES = 120;
 const LOG_POLL_INTERVAL_MS = 1500;
@@ -45,9 +54,9 @@ export default function App() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [actionInFlight, setActionInFlight] = useState(false);
   const [torTestInFlight, setTorTestInFlight] = useState(false);
-  const [routeIpText, setRouteIpText] = useState("Not tested");
-  const [routeDetailText, setRouteDetailText] = useState("Start proxy to verify Tor");
-  const [routeStatus, setRouteStatus] = useState("unavailable");
+  const [routeIpText, setRouteIpText] = useState("Tor route not checked");
+  const [routeDetailText, setRouteDetailText] = useState("Start proxy to enable verification");
+  const [routeStatus, setRouteStatus] = useState<TorRouteStatus>("untested");
   const lastLogSequence = useRef(0);
   const localLogSequence = useRef(0);
   const settingsSaveTimer = useRef<number | undefined>(undefined);
@@ -178,6 +187,9 @@ export default function App() {
         options: settings,
       });
       renderStatus(nextStatus, true);
+      setRouteStatus("untested");
+      setRouteIpText("Tor route not checked");
+      setRouteDetailText("Use Test Tor to verify the active route");
       writeLog(`SOCKS proxy running on ${nextStatus.endpoint}`);
     } finally {
       setActionInFlight(false);
@@ -191,6 +203,9 @@ export default function App() {
     try {
       const nextStatus = await invoke<StatusDto>("stop_socks");
       renderStatus(nextStatus);
+      setRouteStatus("untested");
+      setRouteIpText("Tor route not checked");
+      setRouteDetailText("Start proxy to enable verification");
       writeLog("SOCKS proxy stopped.");
     } finally {
       setActionInFlight(false);
@@ -234,18 +249,20 @@ export default function App() {
 
   const testTorConnection = useCallback(async () => {
     if (status.status !== "Running") {
-      setRouteDetailText("Start proxy first");
+      setRouteStatus("untested");
+      setRouteIpText("Tor route not checked");
+      setRouteDetailText("Start proxy to enable verification");
       return;
     }
 
     setTorTestInFlight(true);
-    setRouteIpText("Testing Tor route");
+    setRouteIpText("Checking active route");
     setRouteDetailText("Contacting Tor Check");
-    setRouteStatus("");
+    setRouteStatus("untested");
 
     try {
       const result = await invoke<TorCheckDto>("test_tor_connection");
-      setRouteIpText(result.ip ?? result.message);
+      setRouteIpText(result.ip ? `Exit IP: ${result.ip}` : result.message);
       setRouteDetailText(result.latency_ms ? `${result.latency_ms} ms latency` : "Latency unavailable");
       setRouteStatus(result.status);
     } catch (error) {

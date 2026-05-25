@@ -1,7 +1,7 @@
 import { Button } from "@heroui/react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  CheckCircle2,
+  CircleHelp,
   Copy,
   Loader2,
   Play,
@@ -13,14 +13,14 @@ import {
 import { LiveLog } from "./LiveLog";
 import { cardVariants, quickTransition, springTransition, viewVariants } from "../motionPresets";
 import { statusMeta } from "../statusMeta";
-import type { LogLine, ProxyStatus } from "../types";
+import type { LogLine, ProxyStatus, TorRouteStatus } from "../types";
 
 type MainViewProps = {
   endpoint: string;
   status: ProxyStatus;
   actionInFlight: boolean;
   torTestInFlight: boolean;
-  routeStatus: string;
+  routeStatus: TorRouteStatus;
   routeIpText: string;
   routeDetailText: string;
   logs: LogLine[];
@@ -44,7 +44,23 @@ function actionLabel(status: ProxyStatus, actionInFlight: boolean) {
   return status === "Running" ? "Stop" : "Start";
 }
 
-function torIcon(status: string, inFlight: boolean) {
+function statusDetail(status: ProxyStatus) {
+  if (status === "Running") {
+    return "Local SOCKS endpoint is accepting traffic";
+  }
+
+  if (status === "Bootstrapping") {
+    return "Connecting to the Tor network";
+  }
+
+  if (status === "Error") {
+    return "Check logs, then try starting again";
+  }
+
+  return "No traffic is routed yet";
+}
+
+function torIcon(status: TorRouteStatus, inFlight: boolean) {
   if (inFlight) {
     return <Loader2 className="animate-spin" size={15} />;
   }
@@ -61,16 +77,16 @@ function torIcon(status: string, inFlight: boolean) {
     return <WifiOff size={15} />;
   }
 
-  return <CheckCircle2 size={15} />;
+  return <CircleHelp size={15} />;
 }
 
-function torResultMeta(status: string, text: string, detail: string, inFlight: boolean) {
+function torResultMeta(status: TorRouteStatus, text: string, detail: string, inFlight: boolean, isRunning: boolean) {
   if (inFlight) {
     return {
       className: "text-amber-200",
       label: "Checking",
       detail: "Contacting Tor Check",
-      text: "Checking...",
+      text: "Checking active route",
     };
   }
 
@@ -86,7 +102,7 @@ function torResultMeta(status: string, text: string, detail: string, inFlight: b
   if (status === "not_tor") {
     return {
       className: "text-red-300",
-      label: text.startsWith("Default IP") ? "Default" : "Not Tor",
+      label: "Not Tor",
       detail,
       text,
     };
@@ -103,9 +119,9 @@ function torResultMeta(status: string, text: string, detail: string, inFlight: b
 
   return {
     className: "text-[#b8a494]",
-    label: "Default",
-    detail,
-    text,
+    label: "Not tested",
+    detail: isRunning ? "Use Test Tor to verify the active route" : "Start proxy to enable verification",
+    text: "Tor route not checked",
   };
 }
 
@@ -131,7 +147,7 @@ export function MainView({
   const isBootstrapping = status === "Bootstrapping";
   const canStart = status === "Stopped" || status === "Error";
   const canUsePrimary = !actionInFlight && !isBootstrapping && (isRunning || canStart);
-  const torResult = torResultMeta(routeStatus, routeIpText, routeDetailText, torTestInFlight);
+  const torResult = torResultMeta(routeStatus, routeIpText, routeDetailText, torTestInFlight, isRunning);
 
   return (
     <AnimatePresence mode="wait">
@@ -163,13 +179,14 @@ export function MainView({
               </div>
               <div className="min-w-0 flex-1">
                 <span className="text-[0.68rem] font-black uppercase tracking-wide text-[#b8a494]">
-                  Connection health
+                  Proxy status
                 </span>
                 <div className="mt-0.5 flex items-center gap-2">
                   <strong className="text-base font-black text-[#fff2e5]">{meta.health}</strong>
                   {isRunning ? <span className="size-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.9)]" /> : null}
                 </div>
-                <p className="mt-1 break-all text-[0.78rem] font-bold text-[#b8a494]">{endpoint}</p>
+                <p className="mt-1 text-[0.72rem] font-bold text-[#b8a494]">{statusDetail(status)}</p>
+                <p className="mt-0.5 break-all text-[0.72rem] font-bold text-[#8f7d70]">SOCKS {endpoint}</p>
               </div>
               <Button className="ghost-button" size="sm" variant="outline" onPress={onCopyEndpoint}>
                 <Copy size={14} />
