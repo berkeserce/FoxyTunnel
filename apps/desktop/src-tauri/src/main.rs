@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 
 const MAX_LOG_LINES: usize = 500;
 const MAIN_WINDOW_LABEL: &str = "main";
-const APP_ICON_BYTES: &[u8] = include_bytes!("../icons/fav1.png");
+const APP_ICON_BYTES: &[u8] = include_bytes!("../icons/new-icon-96.png");
 const SUPPORTED_EXIT_COUNTRIES: &[&str] = &["TR", "DE", "NL", "FR", "GB", "US", "CA", "SE"];
 
 type TaskHandle = tauri::async_runtime::JoinHandle<()>;

@@ -12,7 +12,7 @@ they contradict documented behavior. Examples of expected early limitations are:
 When reporting a security issue, include:
 
 - affected version or commit,
-- Windows version,
+- operating system and version,
 - reproduction steps,
 - expected behavior,
 - observed behavior.

@@ -1,5 +1,6 @@
 import { Button, Chip } from "@heroui/react";
 import { Settings } from "lucide-react";
+import logoSrc from "../assets/foxytunnel-logo.png";
 import { statusMeta } from "../statusMeta";
 import type { ProxyStatus, ViewMode } from "../types";
 
@@ -15,7 +16,16 @@ export function AppHeader({ status, view, onOpenSettings }: AppHeaderProps) {
 
   return (
     <header className="relative z-10 flex flex-none items-center justify-between gap-3">
-      <div className="flex min-w-0 flex-1 items-center">
+      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+        <div className="grid size-10 flex-none place-items-center rounded-lg border border-orange-900/70 bg-[#1d1510] shadow-[0_10px_24px_rgba(0,0,0,0.26)]">
+          <img
+            alt=""
+            aria-hidden="true"
+            className="size-7 object-contain"
+            draggable={false}
+            src={logoSrc}
+          />
+        </div>
         <div className="min-w-0">
           <p className="m-0 text-[0.72rem] font-black uppercase leading-tight text-amber-300">
             FoxyTunnel
