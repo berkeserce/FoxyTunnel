@@ -3,7 +3,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   CircleHelp,
   Copy,
+  Globe2,
   Loader2,
+  Network,
   Play,
   ShieldCheck,
   ShieldX,
@@ -13,12 +15,14 @@ import {
 import { LiveLog } from "./LiveLog";
 import { cardVariants, quickTransition, springTransition, viewVariants } from "../motionPresets";
 import { statusMeta } from "../statusMeta";
-import type { LogLine, ProxyStatus, TorRouteStatus } from "../types";
+import type { LogLine, ProxyStatus, RoutingMode, SystemProxyStatus, TorRouteStatus } from "../types";
 
 type MainViewProps = {
   endpoint: string;
   exitCountry: string | null;
+  routingMode: RoutingMode;
   status: ProxyStatus;
+  systemProxy: SystemProxyStatus;
   actionInFlight: boolean;
   torTestInFlight: boolean;
   routeStatus: TorRouteStatus;
@@ -27,26 +31,33 @@ type MainViewProps = {
   logs: LogLine[];
   isVisible: boolean;
   onPrimaryAction: () => void;
+  onRoutingModeChange: (mode: RoutingMode) => void;
   onCopyEndpoint: () => void;
   onTestTor: () => void;
   onClearLogs: () => void;
 };
 
-function actionLabel(status: ProxyStatus, actionInFlight: boolean) {
+function actionLabel(status: ProxyStatus, actionInFlight: boolean, routingMode: RoutingMode) {
   if (actionInFlight && status !== "Running") {
-    return "Starting...";
+    return routingMode === "system_proxy" ? "Starting System Proxy..." : "Starting SOCKS...";
   }
 
   if (status === "Bootstrapping") {
     return "Bootstrapping...";
   }
 
-  return status === "Running" ? "Stop" : "Start";
+  if (status === "Running") {
+    return "Stop";
+  }
+
+  return routingMode === "system_proxy" ? "Start System Proxy" : "Start SOCKS";
 }
 
-function statusDetail(status: ProxyStatus) {
+function statusDetail(status: ProxyStatus, routingMode: RoutingMode) {
   if (status === "Running") {
-    return "Local SOCKS endpoint is accepting traffic";
+    return routingMode === "system_proxy"
+      ? "Proxy-aware apps use FoxyTunnel through system proxy"
+      : "Local SOCKS endpoint is accepting traffic";
   }
 
   if (status === "Bootstrapping") {
@@ -58,6 +69,10 @@ function statusDetail(status: ProxyStatus) {
   }
 
   return "No traffic is routed yet";
+}
+
+function modeLabel(routingMode: RoutingMode) {
+  return routingMode === "system_proxy" ? "System Proxy" : "SOCKS Only";
 }
 
 function torIcon(status: TorRouteStatus, inFlight: boolean) {
@@ -128,7 +143,9 @@ function torResultMeta(status: TorRouteStatus, text: string, detail: string, inF
 export function MainView({
   endpoint,
   exitCountry,
+  routingMode,
   status,
+  systemProxy,
   actionInFlight,
   torTestInFlight,
   routeStatus,
@@ -137,6 +154,7 @@ export function MainView({
   logs,
   isVisible,
   onPrimaryAction,
+  onRoutingModeChange,
   onCopyEndpoint,
   onTestTor,
   onClearLogs,
@@ -146,8 +164,13 @@ export function MainView({
   const isRunning = status === "Running";
   const isBootstrapping = status === "Bootstrapping";
   const canStart = status === "Stopped" || status === "Error";
-  const canUsePrimary = !actionInFlight && !isBootstrapping && (isRunning || canStart);
+  const systemProxyUnsupported = routingMode === "system_proxy" && !systemProxy.supported;
+  const canUsePrimary = !actionInFlight && !isBootstrapping && !systemProxyUnsupported && (isRunning || canStart);
+  const modeLocked = actionInFlight || isBootstrapping || isRunning;
   const torResult = torResultMeta(routeStatus, routeIpText, routeDetailText, torTestInFlight, isRunning);
+  const proxyAwareText = systemProxy.supported
+    ? `${systemProxy.backend} proxy-aware apps only`
+    : (systemProxy.message ?? "System Proxy is not supported on this desktop");
 
   return (
     <AnimatePresence mode="wait">
@@ -185,16 +208,56 @@ export function MainView({
                   <strong className="text-base font-black text-[#fff2e5]">{meta.health}</strong>
                   {isRunning ? <span className="size-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.9)]" /> : null}
                 </div>
-                <p className="mt-1 text-[0.72rem] font-bold text-[#b8a494]">{statusDetail(status)}</p>
+                <p className="mt-1 text-[0.72rem] font-bold text-[#b8a494]">{statusDetail(status, routingMode)}</p>
                 <p className="mt-0.5 break-all text-[0.72rem] font-bold text-[#8f7d70]">
                   SOCKS {endpoint}
                   {exitCountry ? ` · Exit: ${exitCountry}` : ""}
+                </p>
+                <p className="mt-0.5 text-[0.7rem] font-bold text-[#8f7d70]">
+                  Mode: {modeLabel(routingMode)}
+                  {routingMode === "system_proxy" ? ` · ${proxyAwareText}` : ""}
                 </p>
               </div>
               <Button className="ghost-button" size="sm" variant="outline" onPress={onCopyEndpoint}>
                 <Copy size={14} />
                 Copy
               </Button>
+            </div>
+
+            <div className="relative mt-2 grid gap-1.5 border-t border-[#3b2819]/70 pt-2">
+              <div className="mode-segment compact" role="radiogroup" aria-label="Routing mode">
+                <button
+                  aria-checked={routingMode === "socks_only"}
+                  className="mode-option"
+                  disabled={modeLocked}
+                  role="radio"
+                  type="button"
+                  onClick={() => onRoutingModeChange("socks_only")}
+                >
+                  <Network size={14} />
+                  SOCKS Only
+                </button>
+                <button
+                  aria-checked={routingMode === "system_proxy"}
+                  className="mode-option"
+                  disabled={modeLocked || !systemProxy.supported}
+                  role="radio"
+                  type="button"
+                  onClick={() => onRoutingModeChange("system_proxy")}
+                >
+                  <Globe2 size={14} />
+                  System Proxy
+                </button>
+              </div>
+              {routingMode === "system_proxy" ? (
+                <p
+                  className={`m-0 text-[0.66rem] font-bold leading-tight ${
+                    systemProxy.supported ? "text-[#b8a494]" : "text-red-200"
+                  }`}
+                >
+                  {systemProxy.supported ? "Routes proxy-aware desktop apps through Tor." : proxyAwareText}
+                </p>
+              ) : null}
             </div>
 
             <div className="relative mt-2 flex min-w-0 items-center justify-between gap-2 border-t border-[#3b2819]/70 pt-2">
@@ -242,7 +305,7 @@ export function MainView({
               ) : (
                 <Play size={16} />
               )}
-              <span className="relative z-10">{actionLabel(status, actionInFlight)}</span>
+              <span className="relative z-10">{actionLabel(status, actionInFlight, routingMode)}</span>
               {(actionInFlight || isBootstrapping) && !isRunning ? (
                 <motion.span
                   animate={{ x: ["-120%", "120%"] }}

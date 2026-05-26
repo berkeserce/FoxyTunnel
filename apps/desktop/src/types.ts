@@ -1,13 +1,24 @@
 export type ProxyStatus = "Stopped" | "Bootstrapping" | "Running" | "Error";
+export type RoutingMode = "socks_only" | "system_proxy";
+
+export type SystemProxyStatus = {
+  supported: boolean;
+  active: boolean;
+  backend: string;
+  message?: string | null;
+  last_error?: string | null;
+};
 
 export type StatusDto = {
   status: ProxyStatus;
   endpoint: string;
   socks_port: number;
+  routing_mode: RoutingMode;
   log_connections: boolean;
   exit_country?: string | null;
   bootstrap_timeout_seconds: number;
   last_error?: string | null;
+  system_proxy: SystemProxyStatus;
 };
 
 export type LogDto = {
@@ -28,6 +39,7 @@ export type LogsDto = {
 
 export type StartOptions = {
   socks_port: number;
+  routing_mode: RoutingMode;
   log_connections: boolean;
   exit_country?: string | null;
   bootstrap_timeout_seconds: number;

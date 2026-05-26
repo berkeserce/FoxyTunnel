@@ -23,10 +23,18 @@ const DEFAULT_STATUS: StatusDto = {
   status: "Stopped",
   endpoint: "127.0.0.1:19050",
   socks_port: 19050,
+  routing_mode: "socks_only",
   log_connections: false,
   exit_country: null,
   bootstrap_timeout_seconds: 120,
   last_error: null,
+  system_proxy: {
+    supported: false,
+    active: false,
+    backend: "Unknown",
+    message: null,
+    last_error: null,
+  },
 };
 
 function isEditableStatus(status: StatusDto["status"]) {
@@ -36,6 +44,7 @@ function isEditableStatus(status: StatusDto["status"]) {
 function optionsFromStatus(status: StatusDto): StartOptions {
   return {
     socks_port: status.socks_port,
+    routing_mode: status.routing_mode,
     log_connections: status.log_connections,
     exit_country: status.exit_country ?? null,
     bootstrap_timeout_seconds: status.bootstrap_timeout_seconds,
@@ -230,6 +239,18 @@ export default function App() {
     }
   }, [refreshStatus, startSocks, status.status, stopSocks, writeLog]);
 
+  const handleRoutingModeChange = useCallback(
+    (routingMode: StartOptions["routing_mode"]) => {
+      const nextSettings = {
+        ...settings,
+        routing_mode: routingMode,
+      };
+      setSettings(nextSettings);
+      scheduleSettingsSave(nextSettings);
+    },
+    [scheduleSettingsSave, settings],
+  );
+
   const copyEndpoint = useCallback(async () => {
     await copyText(status.endpoint);
     writeLog("Endpoint copied.");
@@ -380,7 +401,9 @@ export default function App() {
           isVisible={view === "main"}
           logs={logs}
           exitCountry={status.exit_country ?? null}
+          routingMode={settings.routing_mode}
           status={status.status}
+          systemProxy={status.system_proxy}
           torTestInFlight={torTestInFlight}
           routeDetailText={routeDetailText}
           routeIpText={routeIpText}
@@ -392,6 +415,7 @@ export default function App() {
             copyEndpoint().catch((error) => writeLog(String(error), "error"));
           }}
           onPrimaryAction={handlePrimaryAction}
+          onRoutingModeChange={handleRoutingModeChange}
           onTestTor={testTorConnection}
         />
         <SettingsView

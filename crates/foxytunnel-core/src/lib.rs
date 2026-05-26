@@ -23,6 +23,8 @@ pub struct FoxyTunnelConfig {
     pub socks_host: String,
     /// SOCKS listen port.
     pub socks_port: u16,
+    /// Runtime routing mode.
+    pub routing_mode: RoutingMode,
     /// Whether accepted SOCKS CONNECT targets should be logged.
     pub log_connections: bool,
     /// Optional strict Tor exit country as an ISO alpha-2 code.
@@ -40,6 +42,7 @@ impl Default for FoxyTunnelConfig {
         Self {
             socks_host: "127.0.0.1".to_string(),
             socks_port: 19_050,
+            routing_mode: RoutingMode::SocksOnly,
             log_connections: false,
             exit_country: None,
             bootstrap_timeout_seconds: 120,
@@ -92,6 +95,17 @@ impl FoxyTunnelConfig {
             event_sink: None,
         }
     }
+}
+
+/// Desktop routing mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingMode {
+    /// Only expose the local SOCKS endpoint.
+    #[default]
+    SocksOnly,
+    /// Point the operating system proxy setting at the local SOCKS endpoint.
+    SystemProxy,
 }
 
 /// Configuration loading or serialization error.
@@ -433,8 +447,8 @@ fn install_crypto_provider() {
 #[cfg(test)]
 mod tests {
     use super::{
-        BootstrapBehavior, FoxyTunnelConfig, ProtectionMode, SocksEndpoint, TorServiceConfig,
-        TorServiceError, TorStatus,
+        BootstrapBehavior, FoxyTunnelConfig, ProtectionMode, RoutingMode, SocksEndpoint,
+        TorServiceConfig, TorServiceError, TorStatus,
     };
 
     #[test]
@@ -510,6 +524,7 @@ mod tests {
 
         assert_eq!(config.socks_host, "127.0.0.1");
         assert_eq!(config.socks_port, 19_050);
+        assert_eq!(config.routing_mode, RoutingMode::SocksOnly);
         assert!(!config.log_connections);
         assert_eq!(config.exit_country, None);
         assert_eq!(config.bootstrap_timeout_seconds, 120);
@@ -538,6 +553,7 @@ mod tests {
 
         assert_eq!(config.socks_host, "127.0.0.1");
         assert_eq!(config.socks_port, 19_052);
+        assert_eq!(config.routing_mode, RoutingMode::SocksOnly);
         assert_eq!(config.exit_country, None);
     }
 

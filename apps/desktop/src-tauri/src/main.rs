@@ -1,6 +1,10 @@
 //! `FoxyTunnel` desktop application entry point.
 
-use foxytunnel_core::{ConfigError, FoxyTunnelConfig, SocksServerEvent, TorService};
+mod http_proxy;
+mod system_proxy;
+
+use foxytunnel_core::{ConfigError, FoxyTunnelConfig, RoutingMode, SocksServerEvent, TorService};
+use http_proxy::{HttpProxyBridge, HttpProxyConfig, HttpProxyEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
@@ -15,7 +19,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State, WebviewWindow, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 
 const MAX_LOG_LINES: usize = 500;
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -23,6 +27,8 @@ const APP_ICON_BYTES: &[u8] = include_bytes!("../icons/new-icon-96.png");
 const SUPPORTED_EXIT_COUNTRIES: &[&str] = &["TR", "DE", "NL", "FR", "GB", "US", "CA", "SE"];
 
 type TaskHandle = tauri::async_runtime::JoinHandle<()>;
+type RuntimeTaskHandle = tauri::async_runtime::JoinHandle<Result<(), String>>;
+type ReadySignal = Arc<StdMutex<Option<oneshot::Sender<String>>>>;
 
 #[derive(Default)]
 struct AppState {
@@ -30,6 +36,7 @@ struct AppState {
     config_path: StdMutex<Option<PathBuf>>,
     log_path: StdMutex<Option<PathBuf>>,
     proxy: Mutex<ProxyState>,
+    system_proxy: StdMutex<SystemProxyRuntime>,
     logs: StdMutex<VecDeque<LogDto>>,
 }
 
@@ -38,6 +45,28 @@ struct ProxyState {
     status: ProxyStatus,
     handle: Option<TaskHandle>,
     last_error: Option<String>,
+}
+
+#[derive(Default)]
+struct SystemProxyRuntime {
+    active: bool,
+    last_error: Option<String>,
+}
+
+struct ProxyTasks {
+    socks: Option<RuntimeTaskHandle>,
+    http: Option<RuntimeTaskHandle>,
+}
+
+impl Drop for ProxyTasks {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.socks {
+            handle.abort();
+        }
+        if let Some(handle) = &self.http {
+            handle.abort();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -54,10 +83,12 @@ struct StatusDto {
     status: ProxyStatus,
     endpoint: String,
     socks_port: u16,
+    routing_mode: RoutingMode,
     log_connections: bool,
     exit_country: Option<String>,
     bootstrap_timeout_seconds: u64,
     last_error: Option<String>,
+    system_proxy: system_proxy::SystemProxyStatus,
 }
 
 #[derive(Clone, Serialize)]
@@ -100,6 +131,7 @@ struct TorCheckResponse {
 #[derive(Debug, Clone, Deserialize)]
 struct StartOptions {
     socks_port: u16,
+    routing_mode: RoutingMode,
     log_connections: bool,
     exit_country: Option<String>,
     bootstrap_timeout_seconds: u64,
@@ -230,6 +262,23 @@ async fn start_socks(
         apply_start_options(&mut config, options)?;
     }
 
+    let config = state.config.lock().await.clone();
+    if config.routing_mode == RoutingMode::SystemProxy && !system_proxy::is_supported() {
+        let status = system_proxy_status(&state);
+        let error = status
+            .message
+            .unwrap_or_else(|| "System Proxy mode is not supported on this desktop.".to_string());
+        {
+            let mut proxy = state.proxy.lock().await;
+            proxy.status = ProxyStatus::Error;
+            proxy.last_error = Some(error.clone());
+        }
+        record_system_proxy_error(&state, error.clone());
+        emit_log(&app, &state, "error", error.clone());
+        notify_user(&app, "FoxyTunnel system proxy error", error.clone());
+        return Err(error);
+    }
+
     let already_active = {
         let mut proxy = state.proxy.lock().await;
         if proxy.status == ProxyStatus::Running || proxy.status == ProxyStatus::Bootstrapping {
@@ -245,7 +294,6 @@ async fn start_socks(
         return Ok(status_dto(&state).await);
     }
 
-    let config = state.config.lock().await.clone();
     emit_log(
         &app,
         &state,
@@ -257,36 +305,51 @@ async fn start_socks(
     );
 
     let result = start_proxy_runtime(&app, &state, config.clone()).await;
-
-    let mut proxy = state.proxy.lock().await;
-    match result {
-        Ok(handle) => {
-            proxy.status = ProxyStatus::Running;
-            proxy.handle = Some(handle);
-            proxy.last_error = None;
-            if let Err(error) = persist_config(&app, &state, &config) {
-                emit_log(&app, &state, "error", error);
-            }
-        }
+    let handle = match result {
+        Ok(handle) => handle,
         Err(error) => {
+            let mut proxy = state.proxy.lock().await;
             proxy.status = ProxyStatus::Error;
             proxy.last_error = Some(error.clone());
             emit_log(&app, &state, "error", error.clone());
             notify_user(&app, "FoxyTunnel error", error.clone());
             return Err(error);
         }
+    };
+
+    if config.routing_mode == RoutingMode::SystemProxy
+        && let Err(error) = apply_system_proxy_for_config(&app, &state, &config)
+    {
+        handle.abort();
+        let mut proxy = state.proxy.lock().await;
+        proxy.status = ProxyStatus::Error;
+        proxy.handle = None;
+        proxy.last_error = Some(error.clone());
+        record_system_proxy_error(&state, error.clone());
+        emit_log(&app, &state, "error", error.clone());
+        notify_user(&app, "FoxyTunnel system proxy error", error.clone());
+        return Err(error);
+    }
+
+    let mut proxy = state.proxy.lock().await;
+    proxy.status = ProxyStatus::Running;
+    proxy.handle = Some(handle);
+    proxy.last_error = None;
+    if let Err(error) = persist_config(&app, &state, &config) {
+        emit_log(&app, &state, "error", error);
     }
 
     notify_user(
         &app,
         "FoxyTunnel is running",
-        format!(
-            "SOCKS proxy is listening on {}:{}",
-            config.socks_host, config.socks_port
-        ),
+        running_notification_body(&config),
     );
 
-    Ok(status_from_parts(&config, &proxy))
+    Ok(status_from_parts(
+        &config,
+        &proxy,
+        system_proxy_status(&state),
+    ))
 }
 
 #[tauri::command]
@@ -328,26 +391,114 @@ async fn start_proxy_runtime(
         .map_err(|error| error.to_string())?;
 
     bootstrap_service(app, state, &mut service, config.bootstrap_timeout_seconds).await?;
-    let socks_config = build_socks_config(app, state, &config);
+    let (ready_tx, ready_rx) = oneshot::channel::<String>();
+    let ready_signal = Arc::new(StdMutex::new(Some(ready_tx)));
+    let socks_config = build_socks_config(app, state, &config, Some(ready_signal));
 
     emit_log(app, state, "info", "Starting local SOCKS listener");
+    let socks_task: RuntimeTaskHandle = tauri::async_runtime::spawn(async move {
+        service
+            .run_socks_proxy(socks_config)
+            .await
+            .map_err(|error| error.to_string())
+    });
+
+    let ready_endpoint = match tokio::time::timeout(Duration::from_secs(5), ready_rx).await {
+        Ok(Ok(endpoint)) => endpoint,
+        Ok(Err(_)) => {
+            socks_task.abort();
+            return Err("SOCKS listener stopped before becoming ready".to_string());
+        }
+        Err(_) => {
+            socks_task.abort();
+            return Err("SOCKS listener did not become ready in time".to_string());
+        }
+    };
+    emit_log(
+        app,
+        state,
+        "info",
+        format!("SOCKS listener confirmed on {ready_endpoint}"),
+    );
+
+    let mut socks_task = Some(socks_task);
+    let http_task = if config.routing_mode == RoutingMode::SystemProxy && uses_http_proxy_bridge() {
+        match start_http_proxy_bridge(app, state, &config).await {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                if let Some(handle) = socks_task.take() {
+                    handle.abort();
+                }
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+
+    let tasks = ProxyTasks {
+        socks: socks_task,
+        http: http_task,
+    };
     let proxy_app = app.clone();
     let proxy_state = Arc::clone(state);
     let handle = tauri::async_runtime::spawn(async move {
-        if let Err(error) = service.run_socks_proxy(socks_config).await {
-            let error = format!("SOCKS proxy stopped: {error}");
-            {
-                let mut proxy = proxy_state.proxy.lock().await;
-                proxy.status = ProxyStatus::Error;
-                proxy.last_error = Some(error.clone());
-                proxy.handle = None;
-            }
-            emit_log(&proxy_app, &proxy_state, "error", error.clone());
-            notify_user(&proxy_app, "FoxyTunnel error", error);
-        }
+        handle_proxy_runtime_stop(&proxy_app, &proxy_state, tasks).await;
     });
 
     Ok(handle)
+}
+
+async fn start_http_proxy_bridge(
+    app: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    config: &FoxyTunnelConfig,
+) -> Result<RuntimeTaskHandle, String> {
+    let endpoints = system_proxy_endpoints_from_config(config)?;
+    let (ready_tx, ready_rx) = oneshot::channel::<String>();
+    let ready_signal = Arc::new(StdMutex::new(Some(ready_tx)));
+    let bridge_config = build_http_proxy_config(app, state, Some(ready_signal));
+    let http_authority = endpoints.http.authority();
+    let socks_authority = endpoints.socks.authority();
+
+    emit_log(
+        app,
+        state,
+        "info",
+        format!("Starting local HTTP proxy bridge on {http_authority}"),
+    );
+
+    let bridge = HttpProxyBridge::new(endpoints.http, endpoints.socks).with_config(bridge_config);
+    let bridge_task: RuntimeTaskHandle = tauri::async_runtime::spawn(async move {
+        bridge.run().await.map_err(|error| error.to_string())
+    });
+
+    let ready_endpoint = match tokio::time::timeout(Duration::from_secs(5), ready_rx).await {
+        Ok(Ok(endpoint)) => endpoint,
+        Ok(Err(_)) => return Err(task_startup_error("HTTP proxy bridge", bridge_task).await),
+        Err(_) => {
+            bridge_task.abort();
+            return Err("HTTP proxy bridge did not become ready in time".to_string());
+        }
+    };
+    emit_log(
+        app,
+        state,
+        "info",
+        format!(
+            "HTTP proxy bridge confirmed on {ready_endpoint}; forwarding to SOCKS {socks_authority}"
+        ),
+    );
+
+    Ok(bridge_task)
+}
+
+async fn task_startup_error(label: &str, handle: RuntimeTaskHandle) -> String {
+    match handle.await {
+        Ok(Err(error)) => format!("{label} stopped before becoming ready: {error}"),
+        Ok(Ok(())) => format!("{label} stopped before becoming ready"),
+        Err(error) => format!("{label} task failed before becoming ready: {error}"),
+    }
 }
 
 async fn bootstrap_service(
@@ -383,6 +534,7 @@ fn build_socks_config(
     app: &tauri::AppHandle,
     state: &Arc<AppState>,
     config: &FoxyTunnelConfig,
+    ready_signal: Option<ReadySignal>,
 ) -> foxytunnel_core::SocksServerConfig {
     let mut socks_config = config.socks_server_config();
     let app = app.clone();
@@ -390,6 +542,12 @@ fn build_socks_config(
     socks_config.event_sink = Some(Arc::new(move |event| {
         let (level, message) = match event {
             SocksServerEvent::Listening(endpoint) => {
+                if let Some(ready_signal) = &ready_signal
+                    && let Ok(mut ready_signal) = ready_signal.lock()
+                    && let Some(sender) = ready_signal.take()
+                {
+                    let _ = sender.send(endpoint.clone());
+                }
                 ("info", format!("SOCKS listener ready on {endpoint}"))
             }
             SocksServerEvent::Connect(target) => ("info", format!("SOCKS CONNECT {target}")),
@@ -402,18 +560,122 @@ fn build_socks_config(
     socks_config
 }
 
+fn build_http_proxy_config(
+    app: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    ready_signal: Option<ReadySignal>,
+) -> HttpProxyConfig {
+    let app = app.clone();
+    let state = Arc::clone(state);
+
+    HttpProxyConfig {
+        event_sink: Some(Arc::new(move |event| {
+            let (level, message) = match event {
+                HttpProxyEvent::Listening(endpoint) => {
+                    if let Some(ready_signal) = &ready_signal
+                        && let Ok(mut ready_signal) = ready_signal.lock()
+                        && let Some(sender) = ready_signal.take()
+                    {
+                        let _ = sender.send(endpoint.clone());
+                    }
+                    ("info", format!("HTTP proxy bridge ready on {endpoint}"))
+                }
+                HttpProxyEvent::ConnectionFailed(message) => ("error", message),
+            };
+
+            emit_log(&app, &state, level, message);
+        })),
+    }
+}
+
+async fn handle_proxy_runtime_stop(
+    app: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    tasks: ProxyTasks,
+) {
+    let Some(error) = tasks.wait().await else {
+        return;
+    };
+
+    if let Err(restore_error) = restore_system_proxy_for_state(app, state, false) {
+        emit_log(app, state, "error", restore_error.clone());
+        notify_user(app, "FoxyTunnel system proxy restore failed", restore_error);
+    }
+    {
+        let mut proxy = state.proxy.lock().await;
+        proxy.status = ProxyStatus::Error;
+        proxy.last_error = Some(error.clone());
+        proxy.handle = None;
+    }
+    emit_log(app, state, "error", error.clone());
+    notify_user(app, "FoxyTunnel error", error);
+}
+
+impl ProxyTasks {
+    async fn wait(mut self) -> Option<String> {
+        match (self.socks.take(), self.http.take()) {
+            (Some(socks), Some(http)) => {
+                let mut socks_task = socks;
+                let mut http_task = http;
+                tokio::select! {
+                    result = &mut socks_task => {
+                        self.http = Some(http_task);
+                        runtime_task_error("SOCKS proxy", result)
+                    }
+                    result = &mut http_task => {
+                        self.socks = Some(socks_task);
+                        runtime_task_error("HTTP proxy bridge", result)
+                    }
+                }
+            }
+            (Some(socks), None) => runtime_task_error("SOCKS proxy", socks.await),
+            (None, Some(http)) => runtime_task_error("HTTP proxy bridge", http.await),
+            (None, None) => None,
+        }
+    }
+}
+
+fn runtime_task_error(
+    label: &str,
+    result: Result<Result<(), String>, tauri::Error>,
+) -> Option<String> {
+    match result {
+        Ok(Ok(())) => Some(format!("{label} stopped")),
+        Ok(Err(error)) => Some(format!("{label} stopped: {error}")),
+        Err(tauri::Error::JoinError(error)) if error.is_cancelled() => None,
+        Err(error) => Some(format!("{label} task failed: {error}")),
+    }
+}
+
 #[tauri::command]
 async fn stop_socks(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<StatusDto, String> {
+    let restore_result = restore_system_proxy_for_state(&app, &state, false);
     {
         let mut proxy = state.proxy.lock().await;
         if let Some(handle) = proxy.handle.take() {
             handle.abort();
         }
-        proxy.status = ProxyStatus::Stopped;
-        proxy.last_error = None;
+        if let Err(error) = &restore_result {
+            proxy.status = ProxyStatus::Error;
+            proxy.last_error = Some(error.clone());
+        } else {
+            proxy.status = ProxyStatus::Stopped;
+            proxy.last_error = None;
+        }
+    }
+
+    if let Err(error) = restore_result {
+        record_system_proxy_error(&state, error.clone());
+        emit_log(&app, &state, "error", error.clone());
+        notify_user(
+            &app,
+            "FoxyTunnel system proxy restore failed",
+            error.clone(),
+        );
+        return Err(error);
     }
 
     emit_log(&app, &state, "info", "SOCKS proxy stopped");
@@ -628,8 +890,9 @@ fn open_path(path: &Path) -> Result<(), String> {
 async fn status_dto(state: &Arc<AppState>) -> StatusDto {
     let config = state.config.lock().await.clone();
     let proxy = state.proxy.lock().await;
+    let system_proxy = system_proxy_status(state);
 
-    status_from_parts(&config, &proxy)
+    status_from_parts(&config, &proxy, system_proxy)
 }
 
 async fn is_proxy_active(state: &Arc<AppState>) -> bool {
@@ -651,8 +914,12 @@ fn apply_start_options(config: &mut FoxyTunnelConfig, options: StartOptions) -> 
     if !(10..=600).contains(&options.bootstrap_timeout_seconds) {
         return Err("Bootstrap timeout must be between 10 and 600 seconds".to_string());
     }
+    if options.routing_mode == RoutingMode::SystemProxy && uses_http_proxy_bridge() {
+        http_proxy_port(options.socks_port)?;
+    }
 
     config.socks_port = options.socks_port;
+    config.routing_mode = options.routing_mode;
     config.log_connections = options.log_connections;
     config.exit_country = normalize_exit_country(options.exit_country)?;
     config.bootstrap_timeout_seconds = options.bootstrap_timeout_seconds;
@@ -777,15 +1044,153 @@ fn endpoint_from_config(config: &FoxyTunnelConfig) -> String {
     format!("{}:{}", config.socks_host, config.socks_port)
 }
 
-fn status_from_parts(config: &FoxyTunnelConfig, proxy: &ProxyState) -> StatusDto {
+fn status_from_parts(
+    config: &FoxyTunnelConfig,
+    proxy: &ProxyState,
+    system_proxy: system_proxy::SystemProxyStatus,
+) -> StatusDto {
     StatusDto {
         status: proxy.status,
         endpoint: endpoint_from_config(config),
         socks_port: config.socks_port,
+        routing_mode: config.routing_mode,
         log_connections: config.log_connections,
         exit_country: config.exit_country.clone(),
         bootstrap_timeout_seconds: config.bootstrap_timeout_seconds,
         last_error: proxy.last_error.clone(),
+        system_proxy,
+    }
+}
+
+fn running_notification_body(config: &FoxyTunnelConfig) -> String {
+    match config.routing_mode {
+        RoutingMode::SocksOnly => format!(
+            "SOCKS proxy is listening on {}:{}",
+            config.socks_host, config.socks_port
+        ),
+        RoutingMode::SystemProxy => {
+            "System proxy is routed through FoxyTunnel for proxy-aware apps.".to_string()
+        }
+    }
+}
+
+fn system_proxy_status(state: &Arc<AppState>) -> system_proxy::SystemProxyStatus {
+    match state.system_proxy.lock() {
+        Ok(runtime) => system_proxy::platform_status(runtime.active, runtime.last_error.clone()),
+        Err(_) => system_proxy::platform_status(
+            false,
+            Some("system proxy state is unavailable".to_string()),
+        ),
+    }
+}
+
+fn system_proxy_endpoints_from_config(
+    config: &FoxyTunnelConfig,
+) -> Result<system_proxy::SystemProxyEndpoints, String> {
+    let socks = system_proxy::ProxyEndpoint {
+        host: config.socks_host.clone(),
+        port: config.socks_port,
+    };
+    let http = if uses_http_proxy_bridge() {
+        system_proxy::ProxyEndpoint {
+            host: config.socks_host.clone(),
+            port: http_proxy_port(config.socks_port)?,
+        }
+    } else {
+        socks.clone()
+    };
+
+    Ok(system_proxy::SystemProxyEndpoints { socks, http })
+}
+
+fn uses_http_proxy_bridge() -> bool {
+    cfg!(target_os = "windows")
+}
+
+fn http_proxy_port(socks_port: u16) -> Result<u16, String> {
+    socks_port.checked_add(1).ok_or_else(|| {
+        "System Proxy mode needs one free local port after the SOCKS port.".to_string()
+    })
+}
+
+fn system_proxy_snapshot_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|path| path.join("system-proxy-snapshot.json"))
+        .map_err(|error| format!("failed to locate app config directory: {error}"))
+}
+
+fn apply_system_proxy_for_config(
+    app: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    config: &FoxyTunnelConfig,
+) -> Result<(), String> {
+    let snapshot_path = system_proxy_snapshot_path(app)?;
+    let endpoints = system_proxy_endpoints_from_config(config)?;
+    let status = system_proxy::apply_system_proxy(&endpoints, &snapshot_path)?;
+    {
+        let mut runtime = state
+            .system_proxy
+            .lock()
+            .map_err(|_| "system proxy state is unavailable".to_string())?;
+        runtime.active = true;
+        runtime.last_error = None;
+    }
+    emit_log(
+        app,
+        state,
+        "info",
+        system_proxy_enabled_message(&status, &endpoints),
+    );
+
+    Ok(())
+}
+
+fn system_proxy_enabled_message(
+    status: &system_proxy::SystemProxyStatus,
+    endpoints: &system_proxy::SystemProxyEndpoints,
+) -> String {
+    if uses_http_proxy_bridge() {
+        format!(
+            "System proxy enabled via {} (HTTP {} -> SOCKS {})",
+            status.backend,
+            endpoints.http.authority(),
+            endpoints.socks.authority()
+        )
+    } else {
+        format!(
+            "System proxy enabled via {} (SOCKS {})",
+            status.backend,
+            endpoints.socks.authority()
+        )
+    }
+}
+
+fn restore_system_proxy_for_state(
+    app: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    only_if_owned: bool,
+) -> Result<bool, String> {
+    let snapshot_path = system_proxy_snapshot_path(app)?;
+    let restored = if only_if_owned {
+        system_proxy::restore_system_proxy_if_owned(&snapshot_path)?
+    } else {
+        system_proxy::restore_system_proxy(&snapshot_path)?
+    };
+
+    let mut runtime = state
+        .system_proxy
+        .lock()
+        .map_err(|_| "system proxy state is unavailable".to_string())?;
+    runtime.active = false;
+    runtime.last_error = None;
+
+    Ok(restored)
+}
+
+fn record_system_proxy_error(state: &Arc<AppState>, error: String) {
+    if let Ok(mut runtime) = state.system_proxy.lock() {
+        runtime.last_error = Some(error);
     }
 }
 
@@ -799,6 +1204,16 @@ fn main() {
                 emit_log(app.handle(), &state, "error", error);
             }
             emit_log(app.handle(), &state, "info", "FoxyTunnel session started");
+            match restore_system_proxy_for_state(app.handle(), &state, true) {
+                Ok(true) => emit_log(
+                    app.handle(),
+                    &state,
+                    "info",
+                    "Restored stale system proxy settings from previous session",
+                ),
+                Ok(false) => {}
+                Err(error) => emit_log(app.handle(), &state, "error", error),
+            }
             if let Err(error) = load_persisted_config(app.handle(), &state) {
                 emit_log(app.handle(), &state, "error", error);
             }
@@ -854,7 +1269,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show_panel" => show_panel(app),
             "hide_panel" => hide_panel(app),
-            "quit" => app.exit(0),
+            "quit" => quit_app(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -915,6 +1330,14 @@ fn hide_panel(app: &tauri::AppHandle) {
     }
 }
 
+fn quit_app(app: &tauri::AppHandle) {
+    let state = Arc::clone(app.state::<Arc<AppState>>().inner());
+    if let Err(error) = restore_system_proxy_for_state(app, &state, false) {
+        emit_log(app, &state, "error", error);
+    }
+    app.exit(0);
+}
+
 fn show_window(window: &WebviewWindow) {
     let _ = window.show();
     let _ = window.unminimize();
@@ -943,7 +1366,7 @@ mod tests {
         config_file_path_from_dir, normalize_exit_country, reset_tor_data_dirs,
         tor_check_from_response, write_config_to_file,
     };
-    use foxytunnel_core::FoxyTunnelConfig;
+    use foxytunnel_core::{FoxyTunnelConfig, RoutingMode};
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -966,6 +1389,7 @@ mod tests {
         let path = config_file_path_from_dir(&dir);
         let config = FoxyTunnelConfig {
             socks_port: 19_051,
+            routing_mode: RoutingMode::SystemProxy,
             log_connections: true,
             exit_country: Some("DE".to_string()),
             bootstrap_timeout_seconds: 90,
@@ -986,6 +1410,7 @@ mod tests {
             &mut config,
             StartOptions {
                 socks_port: 19_050,
+                routing_mode: RoutingMode::SocksOnly,
                 log_connections: false,
                 exit_country: None,
                 bootstrap_timeout_seconds: 5,

@@ -109,7 +109,10 @@ export function SettingsView({
                 />
 
                 <div className="relative grid gap-1.5">
-                  <LabelWithInfo text="Port" tooltip="Local SOCKS port. Configure your browser to use this port." />
+                  <LabelWithInfo
+                    text="Port"
+                    tooltip="Local SOCKS port. Windows System Proxy uses the next port for its HTTP proxy."
+                  />
                   <input
                     className="fox-input"
                     disabled={isDisabled}

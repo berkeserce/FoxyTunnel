@@ -27,6 +27,7 @@ logs, and a small Tor Control panel.
 ## Features
 
 - Start and stop a local SOCKS5 proxy backed by Arti.
+- Switch between SOCKS Only and System Proxy routing modes.
 - Copy the local proxy endpoint, defaulting to `127.0.0.1:19050`.
 - Verify the active route through Tor Check from inside the app.
 - Select a strict Tor exit country from a fixed list.
@@ -38,9 +39,11 @@ logs, and a small Tor Control panel.
 
 ## Current Scope
 
-FoxyTunnel is not a VPN and does not currently route all system traffic. The
-main supported path is applications configured to use FoxyTunnel's local SOCKS5
-endpoint.
+FoxyTunnel is not a VPN and does not currently route all system traffic. SOCKS
+Only mode exposes the local SOCKS5 endpoint directly. System Proxy mode points
+Linux desktop proxy settings at the local SOCKS5 endpoint. On Windows, it points
+the system HTTP proxy setting at FoxyTunnel's local HTTP bridge for
+proxy-aware applications.
 
 UDP and ICMP are not supported by the SOCKS proxy. DNS should be sent through
 SOCKS-aware applications using remote hostname resolution, for example
